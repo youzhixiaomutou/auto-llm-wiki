@@ -1,5 +1,7 @@
 # Auto LLM Wiki
 
+English | [简体中文](README.zh-CN.md)
+
 Auto LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. It helps turn raw source notes into a persistent, structured wiki that compounds over time instead of re-deriving knowledge from scratch on every query.
 
 ## Features

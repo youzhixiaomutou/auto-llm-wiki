@@ -1,0 +1,151 @@
+# Auto LLM Wiki
+
+[English](README.md) | 简体中文
+
+Auto LLM Wiki 是一个用于维护 Karpathy 风格 LLM Wiki 的 Obsidian 插件。它可以把原始来源笔记转化为持久、结构化、可持续积累的 Wiki，避免每次查询都从零重新推导知识。
+
+## 功能
+
+- 扫描已配置的原始来源文件夹，发现新增或变更的 Markdown 文件。
+- 跟踪原始文件内容哈希，在后续运行中跳过未变化的来源。
+- 只把新增或变更的原始文件发送到 OpenAI-compatible chat completions endpoint。
+- 为 Wiki 更新生成结构化 JSON 变更计划。
+- 在写入 vault 之前预览拟议变更。
+- 仅在用户确认后应用变更。
+- 保持原始来源和资源文件只读。
+- 维护可配置的 Wiki、索引和日志路径。
+- 在 Obsidian 状态栏显示持久命令进度。
+- 在宽版卡片式确认弹窗中审阅变更。
+
+## 默认 vault 布局
+
+插件默认使用以下结构：
+
+```text
+raw/             # 不可变来源笔记
+raw/assets/      # 来源附件
+wiki/            # 由 LLM 维护的 Wiki 页面
+wiki/index.md    # 内容索引
+wiki/log.md      # 按时间记录的 ingest/query/lint 日志
+```
+
+所有路径都可以在插件设置中配置。
+
+## 开发安装
+
+1. 安装依赖：
+
+   ```bash
+   npm install
+   ```
+
+2. 构建插件：
+
+   ```bash
+   npm run build
+   ```
+
+3. 将这些文件复制到你的 Obsidian vault 插件目录：
+
+   ```text
+   <your-vault>/.obsidian/plugins/auto-llm-wiki/manifest.json
+   <your-vault>/.obsidian/plugins/auto-llm-wiki/main.js
+   <your-vault>/.obsidian/plugins/auto-llm-wiki/styles.css
+   ```
+
+4. 在 Obsidian 社区插件设置中启用 **Auto LLM Wiki**。
+
+## 配置
+
+打开插件设置并配置：
+
+- **Raw folder**：包含不可变来源 Markdown 文件的文件夹。
+- **Wiki folder**：生成的 Wiki 页面写入位置。
+- **Assets folder**：只读附件文件夹。
+- **Index path**：Wiki 索引文件路径。
+- **Log path**：Wiki 日志文件路径。
+- **OpenAI API URL**：chat completions endpoint，例如：
+
+  ```text
+  https://api.openai.com/v1/chat/completions
+  ```
+
+- **OpenAI API key**：OpenAI-compatible provider 的 API key。
+- **OpenAI model**：要使用的模型名称。
+
+只要 URL 直接指向 `/v1/chat/completions` endpoint，也可以使用第三方 OpenAI-compatible provider。
+
+## 使用
+
+### 摄入变更的原始文件
+
+1. 将来源 Markdown 文件放到已配置的 raw folder 下。
+2. 运行命令：
+
+   ```text
+   Ingest active source into Auto LLM Wiki
+   ```
+
+虽然命令名如此，当前实现会扫描已配置的 raw folder，并且只处理新增或变更过的原始 Markdown 文件。已经成功应用过的文件会被跳过，直到其内容发生变化。
+
+命令流程：
+
+1. 扫描 raw folder 中的变更文件。
+2. 将变更来源和 Wiki 上下文发送给模型。
+3. 验证返回的变更计划。
+4. 显示审阅弹窗。
+5. 仅在确认后应用变更。
+6. 仅在变更成功应用后记录原始文件哈希。
+
+### 查询 Wiki
+
+运行：
+
+```text
+Query Auto LLM Wiki
+```
+
+插件会读取 Wiki 上下文，并要求模型返回可保存的变更计划。你可以审阅并应用拟议结果。
+
+### Lint Wiki
+
+运行：
+
+```text
+Lint Auto LLM Wiki
+```
+
+插件会要求模型查找过时声明、矛盾内容、孤立页面、缺失的交叉引用，以及重要概念缺页和数据缺口。
+
+## 安全模型
+
+- 生成的变更计划永远不会修改原始文件。
+- 资源文件被视为只读。
+- 拒绝写入已配置 Wiki folder 之外的位置。
+- `indexPath` 和 `logPath` 必须位于已配置 Wiki folder 内。
+- 拟议文件变更必须先审阅再应用。
+- 仅在 Apply 成功后更新原始文件状态。
+
+## 隐私和网络使用
+
+此插件会将选定的 vault 内容发送到插件设置中配置的 OpenAI-compatible chat completions endpoint。摄入时，它会发送新增或变更的原始 Markdown 来源文件，以及 Wiki index/log 上下文。执行 query 和 lint 命令时，它会发送相关 Wiki 上下文。除非你配置了 API URL 和 API key 并运行命令，否则插件不会发起网络请求。
+
+API key 会本地存储在 Obsidian 插件数据中，并且只会作为 Authorization header 发送到已配置的 API URL。如果你配置了第三方 OpenAI-compatible endpoint，你的 API key 和选中的 vault 内容会发送给该 provider。
+
+此插件不包含遥测、分析、广告或自更新机制。
+
+## 开发
+
+运行测试：
+
+```bash
+npm test
+```
+
+构建：
+
+```bash
+npm run build
+```
+
+生成的 `main.js` 会被 git 忽略，不应提交。
