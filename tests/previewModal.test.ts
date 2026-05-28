@@ -16,7 +16,7 @@ test("applies critical shell width inline so modal widens without external CSS",
   modal.onOpen();
   const modalEl = modal.modalEl as unknown as { classes: string[]; styles: Record<string, string> };
 
-  expect(modalEl.classes).toContain("llm-wiki-review-modal-shell");
+  expect(modalEl.classes).toContain("auto-llm-wiki-review-modal-shell");
   expect(modalEl.styles.width).toBe("min(1120px, 96vw)");
   expect(modalEl.styles["max-width"]).toBe("1120px");
 });
@@ -34,15 +34,15 @@ test("renders a polished card-based review layout", () => {
   const contentEl = modal.contentEl as unknown as { classes: string[]; texts: string[] };
 
   expect(contentEl.classes).toEqual(expect.arrayContaining([
-    "llm-wiki-review-modal",
-    "llm-wiki-review-hero",
-    "llm-wiki-review-stats",
-    "llm-wiki-stat-chip",
-    "llm-wiki-operation-card",
-    "llm-wiki-operation-badge",
-    "llm-wiki-path-pill",
-    "llm-wiki-code-preview",
-    "llm-wiki-action-bar"
+    "auto-llm-wiki-review-modal",
+    "auto-llm-wiki-review-hero",
+    "auto-llm-wiki-review-stats",
+    "auto-llm-wiki-stat-chip",
+    "auto-llm-wiki-operation-card",
+    "auto-llm-wiki-operation-badge",
+    "auto-llm-wiki-path-pill",
+    "auto-llm-wiki-code-preview",
+    "auto-llm-wiki-action-bar"
   ]));
   expect(contentEl.texts).toEqual(expect.arrayContaining([
     "Review Auto LLM Wiki changes",

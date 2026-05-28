@@ -13,13 +13,13 @@ export class ChangePlanPreviewModal extends Modal {
   }
 
   onOpen(): void {
-    this.modalEl.addClass("llm-wiki-review-modal-shell");
+    this.modalEl.addClass("auto-llm-wiki-review-modal-shell");
     this.applyStyles(this.modalEl, {
       width: "min(1120px, 96vw)",
       "max-width": "1120px"
     });
     this.contentEl.empty();
-    this.contentEl.addClass("llm-wiki-review-modal");
+    this.contentEl.addClass("auto-llm-wiki-review-modal");
     this.applyStyles(this.contentEl, {
       display: "flex",
       "flex-direction": "column",
@@ -29,7 +29,7 @@ export class ChangePlanPreviewModal extends Modal {
     });
 
     const hero = this.contentEl.createDiv();
-    hero.addClass("llm-wiki-review-hero");
+    hero.addClass("auto-llm-wiki-review-hero");
     this.applyStyles(hero, {
       padding: "28px 32px 22px",
       "border-bottom": "1px solid var(--background-modifier-border)"
@@ -38,14 +38,14 @@ export class ChangePlanPreviewModal extends Modal {
     hero.createEl("p", { text: this.plan.summary || "No summary provided by the model." });
 
     const stats = hero.createDiv();
-    stats.addClass("llm-wiki-review-stats");
+    stats.addClass("auto-llm-wiki-review-stats");
     this.addStatChip(stats, `${this.plan.operations.length} proposed file changes`);
     for (const [kind, count] of this.operationCounts()) {
       this.addStatChip(stats, `${count} ${kind}`);
     }
 
     const changes = this.contentEl.createDiv();
-    changes.addClass("llm-wiki-changes-list");
+    changes.addClass("auto-llm-wiki-changes-list");
     this.applyStyles(changes, {
       display: "flex",
       "flex-direction": "column",
@@ -58,13 +58,13 @@ export class ChangePlanPreviewModal extends Modal {
 
     if (this.plan.operations.length === 0) {
       const emptyState = changes.createDiv();
-      emptyState.addClass("llm-wiki-empty-state");
+      emptyState.addClass("auto-llm-wiki-empty-state");
       emptyState.createEl("p", { text: "No file changes were proposed by the model." });
     }
 
     for (const operation of this.plan.operations) {
       const section = changes.createDiv();
-      section.addClass("llm-wiki-operation-card");
+      section.addClass("auto-llm-wiki-operation-card");
       this.applyStyles(section, {
         padding: "18px",
         border: "1px solid var(--background-modifier-border)",
@@ -74,16 +74,16 @@ export class ChangePlanPreviewModal extends Modal {
       });
 
       const header = section.createDiv();
-      header.addClass("llm-wiki-operation-header");
+      header.addClass("auto-llm-wiki-operation-header");
       const badge = header.createEl("span", { text: operation.kind.toUpperCase() });
-      badge.addClass("llm-wiki-operation-badge");
-      badge.addClass(`llm-wiki-operation-${operation.kind}`);
+      badge.addClass("auto-llm-wiki-operation-badge");
+      badge.addClass(`auto-llm-wiki-operation-${operation.kind}`);
       const path = header.createEl("span", { text: operation.path });
-      path.addClass("llm-wiki-path-pill");
+      path.addClass("auto-llm-wiki-path-pill");
 
       section.createEl("p", { text: operation.rationale });
       const preview = section.createEl("pre", { text: operation.content });
-      preview.addClass("llm-wiki-code-preview");
+      preview.addClass("auto-llm-wiki-code-preview");
       this.applyStyles(preview, {
         "max-height": "380px",
         overflow: "auto",
@@ -94,7 +94,7 @@ export class ChangePlanPreviewModal extends Modal {
     }
 
     const actions = this.contentEl.createDiv();
-    actions.addClass("llm-wiki-action-bar");
+    actions.addClass("auto-llm-wiki-action-bar");
     this.applyStyles(actions, {
       position: "sticky",
       bottom: "0",
@@ -136,7 +136,7 @@ export class ChangePlanPreviewModal extends Modal {
 
   private addStatChip(container: HTMLElement, text: string): void {
     const chip = container.createEl("span", { text });
-    chip.addClass("llm-wiki-stat-chip");
+    chip.addClass("auto-llm-wiki-stat-chip");
   }
 
   private operationCounts(): Array<[string, number]> {
