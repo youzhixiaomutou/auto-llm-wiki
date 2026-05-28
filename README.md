@@ -46,9 +46,9 @@ All paths are configurable in the plugin settings.
 3. Copy these files into your Obsidian vault plugin directory:
 
    ```text
-   <your-vault>/.obsidian/plugins/obsidian-llm-wiki/manifest.json
-   <your-vault>/.obsidian/plugins/obsidian-llm-wiki/main.js
-   <your-vault>/.obsidian/plugins/obsidian-llm-wiki/styles.css
+   <your-vault>/.obsidian/plugins/llm-wiki/manifest.json
+   <your-vault>/.obsidian/plugins/llm-wiki/main.js
+   <your-vault>/.obsidian/plugins/llm-wiki/styles.css
    ```
 
 4. Enable **Obsidian LLM Wiki** in Obsidian community plugin settings.
@@ -127,6 +127,8 @@ The plugin asks the model to look for stale claims, contradictions, orphan pages
 ## Privacy and network use
 
 This plugin sends selected vault content to the OpenAI-compatible chat completions endpoint configured in the plugin settings. During ingest, it sends new or changed raw Markdown source files plus wiki index/log context. During query and lint commands, it sends relevant wiki context. No network request is made until you configure an API URL and API key and run a command.
+
+The API key is stored locally in Obsidian plugin data and is sent as an Authorization header only to the configured API URL. If you configure a third-party OpenAI-compatible endpoint, your API key and selected vault content are sent to that provider.
 
 The plugin does not include telemetry, analytics, ads, or a self-update mechanism.
 

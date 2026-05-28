@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-llm-wiki",
+  "name": "llm-wiki",
   "version": "0.1.0",
   "description": "Obsidian plugin for maintaining an LLM Wiki.",
   "main": "main.js",
@@ -9,7 +9,7 @@
     "test": "jest --runInBand"
   },
   "keywords": ["obsidian", "llm", "wiki"],
-  "author": "Claude",
+  "author": "youzhixiaomutou",
   "license": "MIT",
   "devDependencies": {
     "@types/jest": "^29.5.12",
