@@ -25,7 +25,7 @@ export class LLMWikiSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "LLM Wiki Assistant" });
+    containerEl.createEl("h2", { text: "Obsidian LLM Wiki" });
 
     this.addTextSetting("Raw folder", "Immutable source documents.", "rawFolder");
     this.addTextSetting("Wiki folder", "LLM-maintained markdown pages.", "wikiFolder");

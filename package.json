@@ -1,5 +1,5 @@
 {
-  "name": "llm-wiki-assistant",
+  "name": "obsidian-llm-wiki",
   "version": "0.1.0",
   "description": "Obsidian plugin for maintaining an LLM Wiki.",
   "main": "main.js",

@@ -1,6 +1,6 @@
-# LLM Wiki Assistant
+# Obsidian LLM Wiki
 
-LLM Wiki Assistant is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. It helps turn raw source notes into a persistent, structured wiki that compounds over time instead of re-deriving knowledge from scratch on every query.
+Obsidian LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. It helps turn raw source notes into a persistent, structured wiki that compounds over time instead of re-deriving knowledge from scratch on every query.
 
 ## Features
 
@@ -46,12 +46,12 @@ All paths are configurable in the plugin settings.
 3. Copy these files into your Obsidian vault plugin directory:
 
    ```text
-   <your-vault>/.obsidian/plugins/llm-wiki-assistant/manifest.json
-   <your-vault>/.obsidian/plugins/llm-wiki-assistant/main.js
-   <your-vault>/.obsidian/plugins/llm-wiki-assistant/styles.css
+   <your-vault>/.obsidian/plugins/obsidian-llm-wiki/manifest.json
+   <your-vault>/.obsidian/plugins/obsidian-llm-wiki/main.js
+   <your-vault>/.obsidian/plugins/obsidian-llm-wiki/styles.css
    ```
 
-4. Enable **LLM Wiki Assistant** in Obsidian community plugin settings.
+4. Enable **Obsidian LLM Wiki** in Obsidian community plugin settings.
 
 ## Configuration
 

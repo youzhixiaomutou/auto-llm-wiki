@@ -104,7 +104,7 @@ export default class LLMWikiPlugin extends Plugin {
 
   private async runPrompt(prompt: string, onApplySuccess?: () => Promise<void>): Promise<void> {
     if (!this.settings.openAIApiKey) {
-      new Notice("Set your OpenAI API key in LLM Wiki Assistant settings.");
+      new Notice("Set your OpenAI API key in Obsidian LLM Wiki settings.");
       return;
     }
     try {
