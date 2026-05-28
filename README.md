@@ -1,6 +1,6 @@
-# Obsidian LLM Wiki
+# Auto LLM Wiki
 
-Obsidian LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. It helps turn raw source notes into a persistent, structured wiki that compounds over time instead of re-deriving knowledge from scratch on every query.
+Auto LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. It helps turn raw source notes into a persistent, structured wiki that compounds over time instead of re-deriving knowledge from scratch on every query.
 
 ## Features
 
@@ -46,12 +46,12 @@ All paths are configurable in the plugin settings.
 3. Copy these files into your Obsidian vault plugin directory:
 
    ```text
-   <your-vault>/.obsidian/plugins/llm-wiki/manifest.json
-   <your-vault>/.obsidian/plugins/llm-wiki/main.js
-   <your-vault>/.obsidian/plugins/llm-wiki/styles.css
+   <your-vault>/.obsidian/plugins/auto-llm-wiki/manifest.json
+   <your-vault>/.obsidian/plugins/auto-llm-wiki/main.js
+   <your-vault>/.obsidian/plugins/auto-llm-wiki/styles.css
    ```
 
-4. Enable **Obsidian LLM Wiki** in Obsidian community plugin settings.
+4. Enable **Auto LLM Wiki** in Obsidian community plugin settings.
 
 ## Configuration
 
@@ -81,7 +81,7 @@ Third-party OpenAI-compatible providers can be used as long as the URL points di
 2. Run the command:
 
    ```text
-   Ingest active source into LLM Wiki
+   Ingest active source into Auto LLM Wiki
    ```
 
 Despite the command name, the current implementation scans the configured raw folder and processes only new or changed raw Markdown files. Files that have already been successfully applied are skipped until their content changes.
@@ -100,7 +100,7 @@ The command flow is:
 Run:
 
 ```text
-Query LLM Wiki
+Query Auto LLM Wiki
 ```
 
 The plugin reads wiki context and asks the model to return a saveable change plan. You can review and apply the proposed result.
@@ -110,7 +110,7 @@ The plugin reads wiki context and asks the model to return a saveable change pla
 Run:
 
 ```text
-Lint LLM Wiki
+Lint Auto LLM Wiki
 ```
 
 The plugin asks the model to look for stale claims, contradictions, orphan pages, missing cross-references, and data gaps.

@@ -1,6 +1,6 @@
 {
-  "name": "llm-wiki",
-  "version": "0.1.1",
+  "name": "auto-llm-wiki",
+  "version": "0.1.2",
   "description": "Obsidian plugin for maintaining an LLM Wiki.",
   "main": "main.js",
   "scripts": {
