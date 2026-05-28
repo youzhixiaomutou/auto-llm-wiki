@@ -31,7 +31,16 @@ wiki/log.md      # chronological ingest/query/lint log
 
 All paths are configurable in the plugin settings.
 
-## Installation for development
+## Installation
+
+### Install from Obsidian community plugins
+
+1. Open **Settings → Community plugins** in Obsidian.
+2. Turn off **Restricted mode** if needed.
+3. Select **Browse** and search for **Auto LLM Wiki**.
+4. Install and enable the plugin.
+
+### Installation for development
 
 1. Install dependencies:
 
