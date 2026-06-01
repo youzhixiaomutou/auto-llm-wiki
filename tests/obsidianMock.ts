@@ -53,6 +53,25 @@ export class Setting {
     callback({ inputEl: { type: "text" }, setValue() {}, onChange() {} });
     return this;
   }
+
+  addButton(callback: (button: { buttonEl: { disabled?: boolean }; setButtonText(text: string): void; setDisabled(disabled: boolean): void; onClick(callback: () => Promise<void>): void }) => void): this {
+    const button: { buttonText?: string; buttonEl: { disabled?: boolean }; disabled?: boolean; onclick?: () => Promise<void>; setButtonText(text: string): void; setDisabled(disabled: boolean): void; onClick(callback: () => Promise<void>): void } = {
+      buttonEl: {},
+      setButtonText(text: string) {
+        button.buttonText = text;
+      },
+      setDisabled(disabled: boolean) {
+        button.disabled = disabled;
+        button.buttonEl.disabled = disabled;
+      },
+      onClick(callback: () => Promise<void>) {
+        button.onclick = callback;
+      }
+    };
+    (this.containerEl as { buttons?: unknown[] }).buttons?.push(button);
+    callback(button);
+    return this;
+  }
 }
 
 export class Plugin {
@@ -87,6 +106,10 @@ export class TFile {
 
 export function requestUrl(): Promise<{ text: string; status: number }> {
   return Promise.resolve({ text: "{}", status: 200 });
+}
+
+export function loadPdfJs(): Promise<unknown> {
+  return Promise.resolve({});
 }
 
 function createMockElement() {

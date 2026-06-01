@@ -1,5 +1,6 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import LLMWikiPlugin from "./main";
+import { OpenAIProvider } from "./providers/OpenAIProvider";
 import { LLMWikiSettings } from "./types";
 
 export const DEFAULT_SETTINGS: LLMWikiSettings = {
@@ -35,6 +36,32 @@ export class LLMWikiSettingTab extends PluginSettingTab {
     this.addTextSetting("OpenAI API URL", "Chat completions endpoint URL.", "openAIApiUrl");
     this.addTextSetting("OpenAI API key", "Stored in Obsidian plugin data.", "openAIApiKey", true);
     this.addTextSetting("OpenAI model", "Model used for wiki maintenance.", "openAIModel");
+    this.addOpenAIConnectionTest();
+  }
+
+  private addOpenAIConnectionTest(): void {
+    new Setting(this.containerEl)
+      .setName("Test OpenAI connection")
+      .setDesc("Checks whether the configured endpoint returns HTTP 2xx.")
+      .addButton((button) => {
+        button.setButtonText("Test OpenAI connection");
+        button.onClick(async () => {
+          button.setDisabled(true);
+          try {
+            await new OpenAIProvider().testConnection({
+              apiKey: this.plugin.settings.openAIApiKey,
+              apiUrl: this.plugin.settings.openAIApiUrl,
+              model: this.plugin.settings.openAIModel
+            });
+            new Notice("OpenAI connection test succeeded.");
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            new Notice(`OpenAI connection test failed: ${message}`);
+          } finally {
+            button.setDisabled(false);
+          }
+        });
+      });
   }
 
   private addTextSetting(

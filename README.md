@@ -6,7 +6,7 @@ Auto LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. I
 
 ## Features
 
-- Scan the configured raw source folder for new or changed Markdown files.
+- Scan the configured raw source folder for new or changed Markdown and text-based PDF files.
 - Track raw file content hashes so unchanged sources are skipped on later runs.
 - Send only new or changed raw files to an OpenAI-compatible chat completions endpoint.
 - Generate a structured JSON change plan for wiki updates.
@@ -68,7 +68,7 @@ All paths are configurable in the plugin settings.
 
 Open the plugin settings and configure:
 
-- **Raw folder**: folder containing immutable source Markdown files.
+- **Raw folder**: folder containing immutable source Markdown files and text-based PDFs.
 - **Wiki folder**: folder where generated wiki pages should be written.
 - **Assets folder**: read-only attachment folder.
 - **Index path**: wiki index file path.
@@ -88,14 +88,14 @@ Third-party OpenAI-compatible providers can be used as long as the URL points di
 
 ### Ingest changed raw files
 
-1. Put source Markdown files under the configured raw folder.
+1. Put source Markdown files or text-based PDFs under the configured raw folder.
 2. Run the command:
 
    ```text
    Ingest active source into Auto LLM Wiki
    ```
 
-Despite the command name, the current implementation scans the configured raw folder and processes only new or changed raw Markdown files. Files that have already been successfully applied are skipped until their content changes.
+Despite the command name, the current implementation scans the configured raw folder and processes only new or changed raw Markdown files and text-based PDFs. PDFs without extractable text, such as scanned image-only documents, are reported as unsupported. Files that have already been successfully applied are skipped until their content changes.
 
 The command flow is:
 
@@ -137,7 +137,7 @@ The plugin asks the model to look for stale claims, contradictions, orphan pages
 
 ## Privacy and network use
 
-This plugin sends selected vault content to the OpenAI-compatible chat completions endpoint configured in the plugin settings. During ingest, it sends new or changed raw Markdown source files plus wiki index/log context. During query and lint commands, it sends relevant wiki context. No network request is made until you configure an API URL and API key and run a command.
+This plugin sends selected vault content to the OpenAI-compatible chat completions endpoint configured in the plugin settings. During ingest, it sends new or changed raw Markdown source files or extracted text from text-based PDFs plus wiki index/log context. During query and lint commands, it sends relevant wiki context. No network request is made until you configure an API URL and API key and run a command.
 
 The API key is stored locally in Obsidian plugin data and is sent as an Authorization header only to the configured API URL. If you configure a third-party OpenAI-compatible endpoint, your API key and selected vault content are sent to that provider.
 

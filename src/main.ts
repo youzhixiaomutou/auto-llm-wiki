@@ -3,7 +3,7 @@ import { parseChangePlan, validateChangePlan } from "./changePlan";
 import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt } from "./prompts";
 import { OpenAIProvider } from "./providers/OpenAIProvider";
 import { ChangePlanPreviewModal } from "./previewModal";
-import { findChangedRawFiles, RawFileState, updateRawFileState } from "./rawTracker";
+import { findChangedRawFiles, findRawFileCandidates, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
 import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "./settings";
 import { LLMWikiPluginData, LLMWikiSettings } from "./types";
 import { listMarkdownFiles, readTextFile } from "./vaultOps";
@@ -53,25 +53,60 @@ export default class LLMWikiPlugin extends Plugin {
   }
 
   private async ingestActiveSource(): Promise<void> {
-    this.setStatus("Auto LLM Wiki: scanning raw folder for changes...");
-    new Notice("Auto LLM Wiki: scanning raw folder for changes...");
-    const changedRawFiles = await findChangedRawFiles(this.app, this.settings, this.rawFileState);
-    if (changedRawFiles.length === 0) {
-      this.setStatus("Auto LLM Wiki: no raw changes");
-      new Notice("Auto LLM Wiki: no new or changed raw files.");
-      return;
-    }
+    try {
+      this.setStatus("Auto LLM Wiki: scanning raw folder for changes...");
+      new Notice("Auto LLM Wiki: scanning raw folder for changes...");
+      const candidates = findRawFileCandidates(this.app.vault.getFiles(), this.settings);
+      const candidateMessage = this.formatRawCandidateMessage(candidates.sourceFiles.length, candidates.pdfPaths);
+      this.setStatus(candidateMessage);
+      new Notice(candidateMessage);
+      const changedRawFiles = await findChangedRawFiles(this.app, this.settings, this.rawFileState, (path) => {
+        const message = `Auto LLM Wiki: extracting text from PDF ${path}...`;
+        this.setStatus(message);
+        new Notice(message);
+      }, (request) => this.ocrPdfPage(request));
+      if (changedRawFiles.length === 0) {
+        this.setStatus("Auto LLM Wiki: no raw changes");
+        new Notice("Auto LLM Wiki: no new or changed raw files.");
+        return;
+      }
 
-    this.setStatus("Auto LLM Wiki: reading vault context...");
-    new Notice("Auto LLM Wiki: reading vault context...");
-    const prompt = buildIngestPrompt({
-      index: await readTextFile(this.app, this.settings.indexPath),
-      log: await readTextFile(this.app, this.settings.logPath),
-      sources: changedRawFiles.map((file) => ({ path: file.path, content: file.content }))
-    }, this.settings);
-    await this.runPrompt(prompt, async () => {
-      this.rawFileState = updateRawFileState(this.rawFileState, changedRawFiles);
-      await this.saveSettings();
+      this.setStatus("Auto LLM Wiki: reading vault context...");
+      new Notice("Auto LLM Wiki: reading vault context...");
+      const prompt = buildIngestPrompt({
+        index: await readTextFile(this.app, this.settings.indexPath),
+        log: await readTextFile(this.app, this.settings.logPath),
+        sources: changedRawFiles.map((file) => ({ path: file.path, content: file.content }))
+      }, this.settings);
+      await this.runPrompt(prompt, async () => {
+        this.rawFileState = updateRawFileState(this.rawFileState, changedRawFiles);
+        await this.saveSettings();
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Auto LLM Wiki ingest failed.";
+      this.setStatus(`Auto LLM Wiki: error - ${message}`);
+      new Notice(message);
+    }
+  }
+
+  private formatRawCandidateMessage(sourceCount: number, pdfPaths: string[]): string {
+    const sourceLabel = sourceCount === 1 ? "source candidate" : "source candidates";
+    if (pdfPaths.length === 0) return `Auto LLM Wiki: found ${sourceCount} raw ${sourceLabel}, no PDF candidates`;
+    return `Auto LLM Wiki: found ${sourceCount} raw ${sourceLabel}, including PDFs: ${pdfPaths.join(", ")}`;
+  }
+
+  private async ocrPdfPage(request: PdfOcrRequest): Promise<string> {
+    const message = `Auto LLM Wiki: OCR PDF page ${request.pageNumber} from ${request.path}...`;
+    this.setStatus(message);
+    new Notice(message);
+    const imageDataUrl = await renderPdfPageToPngDataUrl(request.page);
+    const provider = new OpenAIProvider();
+    return provider.completeVision({
+      apiKey: this.settings.openAIApiKey,
+      apiUrl: this.settings.openAIApiUrl,
+      model: this.settings.openAIModel,
+      prompt: `Transcribe all visible text from PDF page ${request.pageNumber} of ${request.path}. Return only the transcription, preserving Chinese text and line breaks as much as possible.`,
+      imageDataUrl
     });
   }
 

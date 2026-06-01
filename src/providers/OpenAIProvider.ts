@@ -1,5 +1,5 @@
 import { requestUrl } from "obsidian";
-import { CompleteRequest, LLMProvider } from "./LLMProvider";
+import { CompleteRequest, ConnectionTestRequest, LLMProvider, VisionCompleteRequest } from "./LLMProvider";
 
 type HttpRequest = {
   url: string;
@@ -18,6 +18,26 @@ export class OpenAIProvider implements LLMProvider {
   constructor(private readonly httpClient: HttpClient = defaultHttpClient) {}
 
   async complete(request: CompleteRequest): Promise<string> {
+    return this.completeMessages(request, [
+      { role: "system", content: "You are a careful Auto LLM Wiki maintainer. Return strict JSON only." },
+      { role: "user", content: request.prompt }
+    ]);
+  }
+
+  async completeVision(request: VisionCompleteRequest): Promise<string> {
+    return this.completeMessages(request, [
+      { role: "system", content: "You transcribe visible text from document images. Return plain text only." },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: request.prompt },
+          { type: "image_url", image_url: { url: request.imageDataUrl } }
+        ]
+      }
+    ]);
+  }
+
+  async testConnection(request: ConnectionTestRequest): Promise<void> {
     const response = await this.httpClient({
       url: request.apiUrl || DEFAULT_OPENAI_API_URL,
       options: {
@@ -28,10 +48,31 @@ export class OpenAIProvider implements LLMProvider {
         },
         body: JSON.stringify({
           model: request.model,
-          messages: [
-            { role: "system", content: "You are a careful Auto LLM Wiki maintainer. Return strict JSON only." },
-            { role: "user", content: request.prompt }
-          ],
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1
+        })
+      }
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`OpenAI connection test failed: ${response.status} ${response.text}`);
+    }
+  }
+
+  private async completeMessages(
+    request: CompleteRequest,
+    messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>
+  ): Promise<string> {
+    const response = await this.httpClient({
+      url: request.apiUrl || DEFAULT_OPENAI_API_URL,
+      options: {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${request.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: request.model,
+          messages,
           temperature: 0.2
         })
       }
