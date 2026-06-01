@@ -6,9 +6,11 @@ Auto LLM Wiki 是一个用于维护 Karpathy 风格 LLM Wiki 的 Obsidian 插件
 
 ## 功能
 
-- 扫描已配置的原始来源文件夹，发现新增或变更的 Markdown 文件和文本型 PDF 文件。
+- 扫描已配置的原始来源文件夹，发现新增或变更的 Markdown 文件和 PDF 文件。
+- 直接抽取带文本层的 PDF，并对扫描版或纯图片 PDF 使用视觉 OCR fallback。
 - 跟踪原始文件内容哈希，在后续运行中跳过未变化的来源。
 - 只把新增或变更的原始文件发送到 OpenAI-compatible chat completions endpoint。
+- 在设置页测试已配置的 OpenAI-compatible endpoint 是否可用。
 - 为 Wiki 更新生成结构化 JSON 变更计划。
 - 在写入 vault 之前预览拟议变更。
 - 仅在用户确认后应用变更。
@@ -68,7 +70,7 @@ wiki/log.md      # 按时间记录的 ingest/query/lint 日志
 
 打开插件设置并配置：
 
-- **Raw folder**：包含不可变来源 Markdown 文件和文本型 PDF 的文件夹。
+- **Raw folder**：包含不可变来源 Markdown 文件和 PDF 的文件夹。
 - **Wiki folder**：生成的 Wiki 页面写入位置。
 - **Assets folder**：只读附件文件夹。
 - **Index path**：Wiki 索引文件路径。
@@ -82,29 +84,30 @@ wiki/log.md      # 按时间记录的 ingest/query/lint 日志
 - **OpenAI API key**：OpenAI-compatible provider 的 API key。
 - **OpenAI model**：要使用的模型名称。
 
-只要 URL 直接指向 `/v1/chat/completions` endpoint，也可以使用第三方 OpenAI-compatible provider。
+只要 URL 直接指向 `/v1/chat/completions` endpoint，也可以使用第三方 OpenAI-compatible provider。可以在设置页点击 **Test OpenAI connection**，用当前 URL、key 和 model 检查 endpoint 是否返回 HTTP 2xx。
 
 ## 使用
 
 ### 摄入变更的原始文件
 
-1. 将来源 Markdown 文件或文本型 PDF 放到已配置的 raw folder 下。
+1. 将来源 Markdown 文件或 PDF 放到已配置的 raw folder 下。
 2. 运行命令：
 
    ```text
    Ingest active source into Auto LLM Wiki
    ```
 
-虽然命令名如此，当前实现会扫描已配置的 raw folder，并且只处理新增或变更过的原始 Markdown 文件和文本型 PDF。没有可抽取文本的 PDF（例如纯扫描图片文档）会被提示为不支持。已经成功应用过的文件会被跳过，直到其内容发生变化。
+虽然命令名如此，当前实现会扫描已配置的 raw folder，并且只处理新增或变更过的原始 Markdown 文件和 PDF。带文本层的 PDF 会被直接抽取；扫描版或纯图片 PDF 会逐页渲染为图片，并发送给已配置的 OpenAI-compatible 模型进行视觉 OCR，然后再摄入识别出的文本。已经成功应用过的文件会被跳过，直到其内容发生变化。
 
 命令流程：
 
-1. 扫描 raw folder 中的变更文件。
-2. 将变更来源和 Wiki 上下文发送给模型。
-3. 验证返回的变更计划。
-4. 显示审阅弹窗。
-5. 仅在确认后应用变更。
-6. 仅在变更成功应用后记录原始文件哈希。
+1. 扫描 raw folder 中的变更文件，并在进度提示中显示 raw/PDF 候选文件。
+2. 抽取 Markdown/PDF 来源文本；当 PDF 没有文本层时使用视觉 OCR。
+3. 将变更来源和 Wiki 上下文发送给模型。
+4. 验证返回的变更计划。
+5. 显示审阅弹窗。
+6. 仅在确认后应用变更。
+7. 仅在变更成功应用后记录原始文件哈希。
 
 ### 查询 Wiki
 
@@ -137,7 +140,7 @@ Lint Auto LLM Wiki
 
 ## 隐私和网络使用
 
-此插件会将选定的 vault 内容发送到插件设置中配置的 OpenAI-compatible chat completions endpoint。摄入时，它会发送新增或变更的原始 Markdown 来源文件，或从文本型 PDF 中抽取出的文本，以及 Wiki index/log 上下文。执行 query 和 lint 命令时，它会发送相关 Wiki 上下文。除非你配置了 API URL 和 API key 并运行命令，否则插件不会发起网络请求。
+此插件会将选定的 vault 内容发送到插件设置中配置的 OpenAI-compatible chat completions endpoint。摄入时，它会发送新增或变更的原始 Markdown 来源文件、从带文本层 PDF 中抽取出的文本，或在 PDF 没有文本层时发送渲染后的 PDF 页面图片用于 OCR，并附带 Wiki index/log 上下文。执行 query 和 lint 命令时，它会发送相关 Wiki 上下文。**Test OpenAI connection** 按钮会向已配置 endpoint 发送一个很小的 ping 式 chat completions 请求。除非你配置了 API URL 和 API key 并运行命令或点击测试按钮，否则插件不会发起网络请求。
 
 API key 会本地存储在 Obsidian 插件数据中，并且只会作为 Authorization header 发送到已配置的 API URL。如果你配置了第三方 OpenAI-compatible endpoint，你的 API key 和选中的 vault 内容会发送给该 provider。
 
