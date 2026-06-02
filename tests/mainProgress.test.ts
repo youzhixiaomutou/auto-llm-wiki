@@ -6,6 +6,7 @@ const notices = (obsidian.Notice as unknown as { messages: string[] }).messages;
 
 beforeEach(() => {
   notices.length = 0;
+  (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("en");
   jest.restoreAllMocks();
 });
 
@@ -175,4 +176,75 @@ test("ingest command saves raw PDF hash after applying the proposed changes", as
   await latestModal.contentEl.buttons[0].onclick();
 
   expect(JSON.stringify(savedData.at(-1))).toContain("raw/report.pdf");
+});
+
+test("OCR provider failures are localized at the ingest UI boundary", async () => {
+  (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("zh");
+  jest.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 401, text: "bad key" } as never);
+  (globalThis as unknown as { document: { createElement(tag: string): unknown } }).document = {
+    createElement: () => ({
+      width: 0,
+      height: 0,
+      getContext: () => ({}),
+      toDataURL: () => "data:image/png;base64,abc"
+    })
+  };
+  jest.spyOn(obsidian, "loadPdfJs").mockResolvedValue({
+    getDocument: () => ({
+      promise: Promise.resolve({
+        numPages: 1,
+        getPage: async () => ({
+          getTextContent: async () => ({ items: [] }),
+          getViewport: () => ({ width: 1, height: 1 }),
+          render: () => ({ promise: Promise.resolve() })
+        })
+      })
+    })
+  });
+  const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+  const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } };
+  const pdfFile = new TFileMock("raw/scanned.pdf");
+  const plugin = new PluginMock();
+  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "bad" });
+  plugin.app = {
+    vault: {
+      getFiles: () => [pdfFile],
+      readBinary: async () => new ArrayBuffer(4)
+    }
+  } as never;
+
+  await plugin.onload();
+  await (plugin as unknown as { ingestActiveSource(): Promise<void> }).ingestActiveSource();
+
+  expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki：错误 - OpenAI 请求失败：401 bad key");
+  expect(notices).toContain("OpenAI 请求失败：401 bad key");
+});
+
+test("runPrompt localizes OpenAI request failures at the UI boundary", async () => {
+  jest.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 401, text: "bad key" } as never);
+  const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } };
+  const plugin = new PluginMock();
+  plugin.app = {} as never;
+  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "bad" });
+
+  await plugin.onload();
+  await (plugin as unknown as { runPrompt(prompt: string): Promise<void> }).runPrompt("{}");
+
+  expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki: error - OpenAI request failed: 401 bad key");
+  expect(notices).toContain("OpenAI request failed: 401 bad key");
+});
+
+test("runPrompt localizes invalid OpenAI JSON responses at the UI boundary", async () => {
+  (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("zh");
+  jest.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 200, text: "<!doctype html><html></html>" } as never);
+  const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } };
+  const plugin = new PluginMock();
+  plugin.app = {} as never;
+  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "key" });
+
+  await plugin.onload();
+  await (plugin as unknown as { runPrompt(prompt: string): Promise<void> }).runPrompt("{}");
+
+  expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki：错误 - OpenAI 响应不是 JSON。请检查 API URL；它应指向聊天补全端点。");
+  expect(notices).toContain("OpenAI 响应不是 JSON。请检查 API URL；它应指向聊天补全端点。");
 });

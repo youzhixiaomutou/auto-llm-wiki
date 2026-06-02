@@ -1,5 +1,10 @@
 import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt } from "../src/prompts";
 import { DEFAULT_SETTINGS } from "../src/settings";
+import { __setLanguage } from "./obsidianMock";
+
+beforeEach(() => {
+  __setLanguage("en");
+});
 
 test("ingest prompt asks for strict JSON change plan", () => {
   const prompt = buildIngestPrompt({ index: "# Index", log: "# Log", sourcePath: "raw/a.md", sourceContent: "hello" });
@@ -8,6 +13,14 @@ test("ingest prompt asks for strict JSON change plan", () => {
   expect(prompt).toContain("create");
   expect(prompt).toContain("update");
   expect(prompt).toContain("append");
+});
+
+test("ingest prompt uses Simplified Chinese output instruction for zh locale", () => {
+  __setLanguage("zh");
+
+  const prompt = buildIngestPrompt({ index: "# Index", log: "# Log", sourcePath: "raw/a.md", sourceContent: "hello" });
+
+  expect(prompt).toContain("Write user-visible natural-language output in Simplified Chinese.");
 });
 
 test("query prompt includes question and asks for saveable result", () => {

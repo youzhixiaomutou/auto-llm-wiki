@@ -14,6 +14,13 @@ type HttpResponse = { status: number; text: string };
 type HttpClient = (request: HttpRequest) => Promise<HttpResponse>;
 const DEFAULT_OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
+export class OpenAIProviderError extends Error {
+  constructor(readonly kind: "connection" | "request" | "missing-content" | "invalid-json", message: string) {
+    super(message);
+    this.name = "OpenAIProviderError";
+  }
+}
+
 export class OpenAIProvider implements LLMProvider {
   constructor(private readonly httpClient: HttpClient = defaultHttpClient) {}
 
@@ -54,7 +61,7 @@ export class OpenAIProvider implements LLMProvider {
       }
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`OpenAI connection test failed: ${response.status} ${response.text}`);
+      throw new OpenAIProviderError("connection", `${response.status} ${response.text}`);
     }
   }
 
@@ -79,12 +86,12 @@ export class OpenAIProvider implements LLMProvider {
     });
 
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`OpenAI request failed: ${response.status} ${response.text}`);
+      throw new OpenAIProviderError("request", `${response.status} ${response.text}`);
     }
 
     const parsed = parseOpenAIResponse(response.text);
     const content = parsed.choices?.[0]?.message?.content;
-    if (!content) throw new Error("OpenAI response did not include message content");
+    if (!content) throw new OpenAIProviderError("missing-content", "Response did not include message content");
     return content;
   }
 }
@@ -93,7 +100,7 @@ function parseOpenAIResponse(text: string): { choices?: Array<{ message?: { cont
   try {
     return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
   } catch (error) {
-    throw new Error("OpenAI response was not JSON. Check the API URL; it should point to a chat completions endpoint.");
+    throw new OpenAIProviderError("invalid-json", "Response was not JSON. Check the API URL; it should point to a chat completions endpoint.");
   }
 }
 

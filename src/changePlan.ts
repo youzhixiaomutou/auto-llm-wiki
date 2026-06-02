@@ -1,15 +1,16 @@
+import { t } from "./i18n";
 import { ChangePlan, FileOperation, LLMWikiSettings } from "./types";
 
 const ALLOWED_KINDS = new Set(["create", "update", "append"]);
 
 export function parseChangePlan(text: string): ChangePlan {
   const json = stripFences(text.trim());
-  const parsed = JSON.parse(json) as ChangePlan;
-  if (typeof parsed.summary !== "string" || !Array.isArray(parsed.operations)) {
-    throw new Error("Invalid change plan shape");
+  const parsed = JSON.parse(json) as unknown;
+  if (!isRecord(parsed) || typeof parsed.summary !== "string" || !Array.isArray(parsed.operations)) {
+    throw new Error(t("error.invalidChangePlanShape"));
   }
-  parsed.operations.forEach(assertOperationShape);
-  return parsed;
+  const operations = parsed.operations.map(assertOperationShape);
+  return { summary: parsed.summary, operations };
 }
 
 export function validateChangePlan(plan: ChangePlan, settings: LLMWikiSettings): ChangePlan {
@@ -17,13 +18,13 @@ export function validateChangePlan(plan: ChangePlan, settings: LLMWikiSettings):
   for (const operation of plan.operations) {
     const normalized = normalizePath(operation.path);
     if (normalized !== operation.path) {
-      throw new Error(`Unsafe path: ${operation.path}`);
+      throw new Error(t("error.unsafePath", { path: operation.path }));
     }
     if (!isAllowedWritePath(normalized, settings)) {
-      throw new Error(`Operation path is outside wiki folder: ${operation.path}`);
+      throw new Error(t("error.pathOutsideWiki", { path: operation.path }));
     }
     if (isReadOnlyPath(normalized, settings)) {
-      throw new Error(`Operation path is inside a read-only folder: ${operation.path}`);
+      throw new Error(t("error.pathInsideReadOnly", { path: operation.path }));
     }
   }
   return plan;
@@ -31,12 +32,12 @@ export function validateChangePlan(plan: ChangePlan, settings: LLMWikiSettings):
 
 export function normalizePath(path: string): string {
   if (path.startsWith("/") || path.includes("\\")) {
-    throw new Error(`Unsafe path: ${path}`);
+    throw new Error(t("error.unsafePath", { path }));
   }
   const parts: string[] = [];
   for (const part of path.split("/")) {
     if (!part || part === ".") continue;
-    if (part === "..") throw new Error(`Unsafe path: ${path}`);
+    if (part === "..") throw new Error(t("error.unsafePath", { path }));
     parts.push(part);
   }
   return parts.join("/");
@@ -47,11 +48,23 @@ function stripFences(text: string): string {
   return match ? match[1] : text;
 }
 
-function assertOperationShape(operation: FileOperation): void {
-  if (!ALLOWED_KINDS.has(operation.kind)) throw new Error("Invalid operation kind");
-  if (typeof operation.path !== "string") throw new Error("Invalid operation path");
-  if (typeof operation.content !== "string") throw new Error("Invalid operation content");
-  if (typeof operation.rationale !== "string") throw new Error("Invalid operation rationale");
+function assertOperationShape(operation: unknown): FileOperation {
+  if (!isRecord(operation) || typeof operation.kind !== "string" || !ALLOWED_KINDS.has(operation.kind)) {
+    throw new Error(t("error.invalidOperationKind"));
+  }
+  if (typeof operation.path !== "string") throw new Error(t("error.invalidOperationPath"));
+  if (typeof operation.content !== "string") throw new Error(t("error.invalidOperationContent"));
+  if (typeof operation.rationale !== "string") throw new Error(t("error.invalidOperationRationale"));
+  return {
+    kind: operation.kind as FileOperation["kind"],
+    path: operation.path,
+    content: operation.content,
+    rationale: operation.rationale
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function validateSettingsPaths(settings: LLMWikiSettings): void {
@@ -60,10 +73,10 @@ function validateSettingsPaths(settings: LLMWikiSettings): void {
   const logPath = normalizePath(settings.logPath);
 
   if (!isInsideFolder(indexPath, wikiFolder)) {
-    throw new Error("Index path must be inside the wiki folder");
+    throw new Error(t("error.indexOutsideWiki"));
   }
   if (!isInsideFolder(logPath, wikiFolder)) {
-    throw new Error("Log path must be inside the wiki folder");
+    throw new Error(t("error.logOutsideWiki"));
   }
 }
 

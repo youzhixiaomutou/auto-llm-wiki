@@ -8,7 +8,20 @@ type Button = { buttonText?: string; disabled?: boolean; onclick?: () => void | 
 
 beforeEach(() => {
   notices.length = 0;
+  (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("en");
   jest.restoreAllMocks();
+});
+
+test("settings tab renders Chinese strings when Obsidian language is zh", () => {
+  (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("zh");
+  const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin })();
+  const tab = new LLMWikiSettingTab({} as never, plugin);
+
+  tab.display();
+
+  const texts = (tab.containerEl as unknown as { texts: string[] }).texts;
+  expect(texts).toContain("原始文件夹");
+  expect(texts).toContain("不可变的源文档。");
 });
 
 test("settings tab renders a button for testing the OpenAI connection", () => {
@@ -44,7 +57,7 @@ test("OpenAI connection test reports success for HTTP 2xx", async () => {
   expect(button.disabled).toBe(false);
 });
 
-test("OpenAI connection test reports failure for non-2xx", async () => {
+test("OpenAI connection test reports failure for non-2xx without duplicating the English prefix", async () => {
   jest.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 401, text: "bad key" } as never);
   const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin })();
   plugin.settings = {
@@ -59,6 +72,26 @@ test("OpenAI connection test reports failure for non-2xx", async () => {
   const button = (tab.containerEl as unknown as { buttons: Button[] }).buttons.find((candidate) => candidate.buttonText === "Test OpenAI connection")!;
   await button.onclick!();
 
-  expect(notices).toContain("OpenAI connection test failed: OpenAI connection test failed: 401 bad key");
+  expect(notices).toContain("OpenAI connection test failed: 401 bad key");
+  expect(button.disabled).toBe(false);
+});
+
+test("OpenAI connection test reports localized zh failure with raw provider details", async () => {
+  (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("zh");
+  jest.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 401, text: "bad key" } as never);
+  const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin })();
+  plugin.settings = {
+    ...plugin.settings,
+    openAIApiUrl: "https://example.test/v1/chat/completions",
+    openAIApiKey: "bad",
+    openAIModel: "model"
+  };
+  const tab = new LLMWikiSettingTab({} as never, plugin);
+
+  tab.display();
+  const button = (tab.containerEl as unknown as { buttons: Button[] }).buttons.find((candidate) => candidate.buttonText === "测试 OpenAI 连接")!;
+  await button.onclick!();
+
+  expect(notices).toContain("OpenAI 连接测试失败：401 bad key");
   expect(button.disabled).toBe(false);
 });

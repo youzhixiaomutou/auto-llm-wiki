@@ -1,9 +1,11 @@
 import { ChangePlanPreviewModal } from "../src/previewModal";
 import { Notice } from "obsidian";
+import { __setLanguage } from "./obsidianMock";
 
 const notices = (Notice as unknown as { messages: string[] }).messages;
 
 beforeEach(() => {
+  __setLanguage("en");
   notices.length = 0;
 });
 
@@ -69,6 +71,24 @@ test("shows an empty-plan explanation when there are no proposed operations", ()
   expect(contentEl.texts).toContain("Review Auto LLM Wiki changes");
   expect(contentEl.texts).toContain("No file changes were proposed by the model.");
   expect(contentEl.texts).toContain("0 proposed file changes");
+});
+
+test("localizes preview modal chrome in Simplified Chinese", () => {
+  __setLanguage("zh");
+  const modal = new ChangePlanPreviewModal({} as never, {
+    summary: "",
+    operations: [{ kind: "create", path: "wiki/page.md", content: "# Page", rationale: "test" }]
+  });
+
+  modal.onOpen();
+  const contentEl = modal.contentEl as unknown as { texts: string[] };
+
+  expect(contentEl.texts).toEqual(expect.arrayContaining([
+    "审阅 Auto LLM Wiki 变更",
+    "模型未提供摘要。",
+    "应用变更",
+    "创建"
+  ]));
 });
 
 test("updates status while applying changes and after success", async () => {

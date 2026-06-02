@@ -1,5 +1,6 @@
 import { App, Modal, Notice } from "obsidian";
-import { ChangePlan } from "./types";
+import { t } from "./i18n";
+import { ChangePlan, FileOperationKind } from "./types";
 import { applyChangePlan } from "./vaultOps";
 
 export class ChangePlanPreviewModal extends Modal {
@@ -34,14 +35,17 @@ export class ChangePlanPreviewModal extends Modal {
       padding: "28px 32px 22px",
       "border-bottom": "1px solid var(--background-modifier-border)"
     });
-    hero.createEl("h2", { text: "Review Auto LLM Wiki changes" });
-    hero.createEl("p", { text: this.plan.summary || "No summary provided by the model." });
+    hero.createEl("h2", { text: t("preview.title") });
+    hero.createEl("p", { text: this.plan.summary || t("preview.noSummary") });
 
     const stats = hero.createDiv();
     stats.addClass("auto-llm-wiki-review-stats");
-    this.addStatChip(stats, `${this.plan.operations.length} proposed file changes`);
+    this.addStatChip(stats, t("preview.proposedFileChanges", { count: this.plan.operations.length }));
     for (const [kind, count] of this.operationCounts()) {
-      this.addStatChip(stats, `${count} ${kind}`);
+      this.addStatChip(stats, t("preview.operationCount", {
+        count,
+        kind: this.getOperationLabel(kind).toLocaleLowerCase()
+      }));
     }
 
     const changes = this.contentEl.createDiv();
@@ -59,7 +63,7 @@ export class ChangePlanPreviewModal extends Modal {
     if (this.plan.operations.length === 0) {
       const emptyState = changes.createDiv();
       emptyState.addClass("auto-llm-wiki-empty-state");
-      emptyState.createEl("p", { text: "No file changes were proposed by the model." });
+      emptyState.createEl("p", { text: t("preview.noFileChanges") });
     }
 
     for (const operation of this.plan.operations) {
@@ -75,7 +79,7 @@ export class ChangePlanPreviewModal extends Modal {
 
       const header = section.createDiv();
       header.addClass("auto-llm-wiki-operation-header");
-      const badge = header.createEl("span", { text: operation.kind.toUpperCase() });
+      const badge = header.createEl("span", { text: this.getOperationLabel(operation.kind) });
       badge.addClass("auto-llm-wiki-operation-badge");
       badge.addClass(`auto-llm-wiki-operation-${operation.kind}`);
       const path = header.createEl("span", { text: operation.path });
@@ -105,26 +109,26 @@ export class ChangePlanPreviewModal extends Modal {
       "border-top": "1px solid var(--background-modifier-border)",
       background: "var(--background-primary)"
     });
-    const applyButton = actions.createEl("button", { text: "Apply changes" });
+    const applyButton = actions.createEl("button", { text: t("preview.applyChanges") });
     applyButton.addClass("mod-cta");
     applyButton.onclick = async () => {
       applyButton.disabled = true;
-      this.updateStatus("Auto LLM Wiki: applying changes...");
-      new Notice("Auto LLM Wiki: applying changes...");
+      this.updateStatus(t("status.applyingChanges"));
+      new Notice(t("status.applyingChanges"));
       try {
         await applyChangePlan(this.app, this.plan);
         await this.onApplySuccess();
-        this.updateStatus("Auto LLM Wiki: applied");
-        new Notice("Auto LLM Wiki changes applied.");
+        this.updateStatus(t("status.applied"));
+        new Notice(t("notice.changesApplied"));
         this.close();
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = error instanceof Error ? error.message : t("error.unknown");
         applyButton.disabled = false;
-        this.updateStatus(`Auto LLM Wiki: error - ${message}`);
-        new Notice(`Failed to apply Auto LLM Wiki changes: ${message}`);
+        this.updateStatus(t("status.error", { message }));
+        new Notice(t("notice.applyChangesFailed", { message }));
       }
     };
-    const cancelButton = actions.createEl("button", { text: "Cancel" });
+    const cancelButton = actions.createEl("button", { text: t("preview.cancel") });
     cancelButton.onclick = () => this.close();
   }
 
@@ -139,11 +143,15 @@ export class ChangePlanPreviewModal extends Modal {
     chip.addClass("auto-llm-wiki-stat-chip");
   }
 
-  private operationCounts(): Array<[string, number]> {
-    const counts = new Map<string, number>();
+  private operationCounts(): Array<[FileOperationKind, number]> {
+    const counts = new Map<FileOperationKind, number>();
     for (const operation of this.plan.operations) {
       counts.set(operation.kind, (counts.get(operation.kind) ?? 0) + 1);
     }
     return Array.from(counts.entries());
+  }
+
+  private getOperationLabel(kind: FileOperationKind): string {
+    return t(`operation.${kind}`);
   }
 }

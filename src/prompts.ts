@@ -1,5 +1,10 @@
+import { t, getOutputLanguageName } from "./i18n";
 import { DEFAULT_SETTINGS } from "./settings";
 import { LLMWikiSettings, WikiContext } from "./types";
+
+function outputLanguageInstruction(): string {
+  return t("prompt.outputLanguageInstruction", { language: getOutputLanguageName() });
+}
 
 function buildJsonContract(settings: LLMWikiSettings): string {
   return `Return only JSON with this shape:
@@ -17,6 +22,8 @@ Use only create, update, or append. Write only inside ${settings.wikiFolder}/. U
 export function buildIngestPrompt(context: WikiContext, settings: LLMWikiSettings = DEFAULT_SETTINGS): string {
   return `You maintain a persistent LLM Wiki in Obsidian. Raw sources are immutable. Integrate the source into the wiki by creating or updating markdown pages, refreshing the configured index, and appending the configured log.
 
+${outputLanguageInstruction()}
+
 ${buildJsonContract(settings)}
 
 Current index:
@@ -32,6 +39,8 @@ ${formatSources(context)}`;
 export function buildQueryPrompt(context: WikiContext, settings: LLMWikiSettings = DEFAULT_SETTINGS): string {
   return `You answer questions using the persistent LLM Wiki. Provide an answer as an optional wiki page if the answer should compound into the knowledge base.
 
+${outputLanguageInstruction()}
+
 ${buildJsonContract(settings)}
 
 Question: ${context.question}
@@ -45,6 +54,8 @@ ${formatWikiPages(context.wikiPages ?? [])}`;
 
 export function buildLintPrompt(context: WikiContext, settings: LLMWikiSettings = DEFAULT_SETTINGS): string {
   return `You lint a persistent LLM Wiki. Look for contradictions, stale claims, orphan pages, missing cross-references, important concepts without pages, and data gaps. Save the report as a wiki markdown page if useful.
+
+${outputLanguageInstruction()}
 
 ${buildJsonContract(settings)}
 

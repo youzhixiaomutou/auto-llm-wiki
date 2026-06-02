@@ -1,6 +1,7 @@
 import { App, TFile } from "obsidian";
 import { ChangePlan, FileOperation, LLMWikiSettings } from "./types";
 import { normalizePath } from "./changePlan";
+import { t } from "./i18n";
 
 export function isRawPath(path: string, settings: LLMWikiSettings): boolean {
   const rawFolder = normalizePath(settings.rawFolder);
@@ -10,7 +11,7 @@ export function isRawPath(path: string, settings: LLMWikiSettings): boolean {
 export function ensureMarkdownPath(path: string): string {
   const normalized = normalizePath(path);
   if (!normalized.endsWith(".md")) {
-    throw new Error("Markdown files must use the .md extension");
+    throw new Error(t("error.markdownExtensionRequired"));
   }
   return normalized;
 }
@@ -43,7 +44,7 @@ async function applyOperation(app: App, operation: FileOperation): Promise<void>
   await ensureParentFolders(app, path);
   const existing = app.vault.getAbstractFileByPath(path);
   if (operation.kind === "create") {
-    if (existing) throw new Error(`File already exists: ${path}`);
+    if (existing) throw new Error(t("error.fileAlreadyExists", { path }));
     await app.vault.create(path, operation.content);
     return;
   }

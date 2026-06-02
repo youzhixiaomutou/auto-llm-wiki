@@ -55,16 +55,26 @@ test("tests configured endpoint with HTTP-only validation", async () => {
   expect(body.max_tokens).toBe(1);
 });
 
-test("connection test fails for non-2xx response", async () => {
+test("connection test exposes raw provider error for non-2xx response", async () => {
   const provider = new OpenAIProvider(async () => ({ status: 500, text: "server error" }));
 
   await expect(provider.testConnection({ apiKey: "key", model: "test-model" }))
-    .rejects.toThrow("OpenAI connection test failed: 500 server error");
+    .rejects.toMatchObject({
+      name: "OpenAIProviderError",
+      kind: "connection",
+      message: "500 server error"
+    });
 });
 
-test("throws useful error on non-200 response", async () => {
+test("completion exposes raw provider error for non-2xx response", async () => {
   const provider = new OpenAIProvider(async () => ({ status: 401, text: "bad key" }));
-  await expect(provider.complete({ apiKey: "bad", model: "gpt-test", prompt: "hello" })).rejects.toThrow("OpenAI request failed: 401 bad key");
+
+  await expect(provider.complete({ apiKey: "bad", model: "gpt-test", prompt: "hello" }))
+    .rejects.toMatchObject({
+      name: "OpenAIProviderError",
+      kind: "request",
+      message: "401 bad key"
+    });
 });
 
 test("uses custom chat completions URL", async () => {
@@ -84,7 +94,21 @@ test("uses custom chat completions URL", async () => {
   expect(calls[0].url).toBe("https://example.test/v1/chat/completions");
 });
 
-test("throws endpoint error when successful response is not JSON", async () => {
+test("throws structured provider error when successful response is missing message content", async () => {
+  const provider = new OpenAIProvider(async () => ({ status: 200, text: JSON.stringify({ choices: [{ message: {} }] }) }));
+
+  await expect(provider.complete({
+    apiKey: "key",
+    model: "custom-model",
+    prompt: "hello"
+  })).rejects.toMatchObject({
+    name: "OpenAIProviderError",
+    kind: "missing-content",
+    message: "Response did not include message content"
+  });
+});
+
+test("throws structured provider error when successful response is not JSON", async () => {
   const provider = new OpenAIProvider(async () => ({ status: 200, text: "<!doctype html><html></html>" }));
 
   await expect(provider.complete({
@@ -92,5 +116,9 @@ test("throws endpoint error when successful response is not JSON", async () => {
     model: "custom-model",
     prompt: "hello",
     apiUrl: "https://example.test"
-  })).rejects.toThrow("OpenAI response was not JSON. Check the API URL; it should point to a chat completions endpoint.");
+  })).rejects.toMatchObject({
+    name: "OpenAIProviderError",
+    kind: "invalid-json",
+    message: "Response was not JSON. Check the API URL; it should point to a chat completions endpoint."
+  });
 });

@@ -1,6 +1,7 @@
 import { App, loadPdfJs, TFile } from "obsidian";
 import { LLMWikiSettings } from "./types";
 import { normalizePath } from "./changePlan";
+import { t } from "./i18n";
 
 export interface ChangedRawFile {
   path: string;
@@ -35,7 +36,7 @@ export async function renderPdfPageToPngDataUrl(page: PdfPage, scale = 2): Promi
   canvas.width = viewport.width;
   canvas.height = viewport.height;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("Unable to render PDF page for OCR");
+  if (!context) throw new Error(t("error.renderPdfPageForOcr"));
   await page.render({ canvasContext: context, viewport }).promise;
   return canvas.toDataURL("image/png");
 }
@@ -139,7 +140,7 @@ async function readPdfText(app: App, file: TFile, pdfOcrProvider?: PdfOcrProvide
     }
   }
   const text = pages.join("\n\n");
-  if (!text) throw new Error(`No extractable text found in PDF: ${file.path}`);
+  if (!text) throw new Error(t("error.noExtractablePdfText", { path: file.path }));
   return text;
 }
 

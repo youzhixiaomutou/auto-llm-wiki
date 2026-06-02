@@ -1,6 +1,7 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import LLMWikiPlugin from "./main";
-import { OpenAIProvider } from "./providers/OpenAIProvider";
+import { t } from "./i18n";
+import { OpenAIProvider, OpenAIProviderError } from "./providers/OpenAIProvider";
 import { LLMWikiSettings } from "./types";
 
 export const DEFAULT_SETTINGS: LLMWikiSettings = {
@@ -26,25 +27,25 @@ export class LLMWikiSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Auto LLM Wiki" });
+    containerEl.createEl("h2", { text: t("settings.title") });
 
-    this.addTextSetting("Raw folder", "Immutable source documents.", "rawFolder");
-    this.addTextSetting("Wiki folder", "LLM-maintained markdown pages.", "wikiFolder");
-    this.addTextSetting("Assets folder", "Local attachments for raw sources.", "assetsFolder");
-    this.addTextSetting("Index path", "Content-oriented wiki index.", "indexPath");
-    this.addTextSetting("Log path", "Chronological wiki operation log.", "logPath");
-    this.addTextSetting("OpenAI API URL", "Chat completions endpoint URL.", "openAIApiUrl");
-    this.addTextSetting("OpenAI API key", "Stored in Obsidian plugin data.", "openAIApiKey", true);
-    this.addTextSetting("OpenAI model", "Model used for wiki maintenance.", "openAIModel");
+    this.addTextSetting(t("settings.rawFolder.name"), t("settings.rawFolder.desc"), "rawFolder");
+    this.addTextSetting(t("settings.wikiFolder.name"), t("settings.wikiFolder.desc"), "wikiFolder");
+    this.addTextSetting(t("settings.assetsFolder.name"), t("settings.assetsFolder.desc"), "assetsFolder");
+    this.addTextSetting(t("settings.indexPath.name"), t("settings.indexPath.desc"), "indexPath");
+    this.addTextSetting(t("settings.logPath.name"), t("settings.logPath.desc"), "logPath");
+    this.addTextSetting(t("settings.openAIApiUrl.name"), t("settings.openAIApiUrl.desc"), "openAIApiUrl");
+    this.addTextSetting(t("settings.openAIApiKey.name"), t("settings.openAIApiKey.desc"), "openAIApiKey", true);
+    this.addTextSetting(t("settings.openAIModel.name"), t("settings.openAIModel.desc"), "openAIModel");
     this.addOpenAIConnectionTest();
   }
 
   private addOpenAIConnectionTest(): void {
     new Setting(this.containerEl)
-      .setName("Test OpenAI connection")
-      .setDesc("Checks whether the configured endpoint returns HTTP 2xx.")
+      .setName(t("settings.testConnection.name"))
+      .setDesc(t("settings.testConnection.desc"))
       .addButton((button) => {
-        button.setButtonText("Test OpenAI connection");
+        button.setButtonText(t("settings.testConnection.name"));
         button.onClick(async () => {
           button.setDisabled(true);
           try {
@@ -53,10 +54,14 @@ export class LLMWikiSettingTab extends PluginSettingTab {
               apiUrl: this.plugin.settings.openAIApiUrl,
               model: this.plugin.settings.openAIModel
             });
-            new Notice("OpenAI connection test succeeded.");
+            new Notice(t("notice.openAIConnectionSucceeded"));
           } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            new Notice(`OpenAI connection test failed: ${message}`);
+            const message = error instanceof OpenAIProviderError && error.kind === "connection"
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : t("error.unknown");
+            new Notice(t("notice.openAIConnectionFailed", { message }));
           } finally {
             button.setDisabled(false);
           }

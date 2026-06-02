@@ -1,3 +1,13 @@
+let currentLanguage = "en";
+
+export function getLanguage(): string {
+  return currentLanguage;
+}
+
+export function __setLanguage(language: string): void {
+  currentLanguage = language;
+}
+
 export class Notice {
   static messages: string[] = [];
   message: string;
@@ -41,11 +51,13 @@ export class PluginSettingTab {
 export class Setting {
   constructor(public containerEl: unknown) {}
 
-  setName(): this {
+  setName(name?: string): this {
+    if (name) (this.containerEl as { texts?: string[] }).texts?.push(name);
     return this;
   }
 
-  setDesc(): this {
+  setDesc(desc?: string): this {
+    if (desc) (this.containerEl as { texts?: string[] }).texts?.push(desc);
     return this;
   }
 
