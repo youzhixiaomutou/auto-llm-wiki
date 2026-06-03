@@ -15,6 +15,14 @@ test("ingest prompt asks for strict JSON change plan", () => {
   expect(prompt).toContain("append");
 });
 
+test("ingest prompt asks for newest-first log prepends", () => {
+  const prompt = buildIngestPrompt({ index: "# Index", log: "# Log", sourcePath: "raw/a.md", sourceContent: "hello" });
+
+  expect(prompt).toContain('"kind": "prepend"');
+  expect(prompt).toContain("newest-first");
+  expect(prompt).toContain("Use prepend for new entries in wiki/log.md");
+});
+
 test("ingest prompt uses Simplified Chinese output instruction for zh locale", () => {
   __setLanguage("zh");
 

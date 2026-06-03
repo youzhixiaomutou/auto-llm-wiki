@@ -13,14 +13,14 @@ function buildJsonContract(settings: LLMWikiSettings): string {
   "operations": [
     { "kind": "create", "path": "${settings.wikiFolder}/example.md", "content": "markdown", "rationale": "why this file changes" },
     { "kind": "update", "path": "${settings.indexPath}", "content": "full replacement markdown", "rationale": "why this file changes" },
-    { "kind": "append", "path": "${settings.logPath}", "content": "markdown to append", "rationale": "why this file changes" }
+    { "kind": "prepend", "path": "${settings.logPath}", "content": "newest-first markdown log entry", "rationale": "why this file changes" }
   ]
 }
-Use only create, update, or append. Write only inside ${settings.wikiFolder}/. Use ${settings.indexPath} for the content index and ${settings.logPath} for the chronological log. Treat ${settings.rawFolder}/ and ${settings.assetsFolder}/ as read-only.`;
+Use only create, update, append, or prepend. Write only inside ${settings.wikiFolder}/. Use ${settings.indexPath} for the content index and ${settings.logPath} for the newest-first chronological log. Use prepend for new entries in ${settings.logPath}. Treat ${settings.rawFolder}/ and ${settings.assetsFolder}/ as read-only.`;
 }
 
 export function buildIngestPrompt(context: WikiContext, settings: LLMWikiSettings = DEFAULT_SETTINGS): string {
-  return `You maintain a persistent LLM Wiki in Obsidian. Raw sources are immutable. Integrate the source into the wiki by creating or updating markdown pages, refreshing the configured index, and appending the configured log.
+  return `You maintain a persistent LLM Wiki in Obsidian. Raw sources are immutable. Integrate the source into the wiki by creating or updating markdown pages, refreshing the configured index, and prepending a newest-first entry to the configured log.
 
 ${outputLanguageInstruction()}
 
