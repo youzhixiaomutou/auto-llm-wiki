@@ -28,7 +28,7 @@ raw/             # immutable source notes
 raw/assets/      # source attachments
 wiki/            # LLM-maintained wiki pages
 wiki/index.md    # content index
-wiki/log.md      # chronological ingest/query/lint log
+wiki/log.md      # newest-first ingest/query/lint log
 ```
 
 All paths are configurable in the plugin settings.

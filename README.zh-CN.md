@@ -28,7 +28,7 @@ raw/             # 不可变来源笔记
 raw/assets/      # 来源附件
 wiki/            # 由 LLM 维护的 Wiki 页面
 wiki/index.md    # 内容索引
-wiki/log.md      # 按时间记录的 ingest/query/lint 日志
+wiki/log.md      # 最新在前的 ingest/query/lint 日志
 ```
 
 所有路径都可以在插件设置中配置。
