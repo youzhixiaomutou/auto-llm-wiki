@@ -52,9 +52,15 @@ async function applyOperation(app: App, operation: FileOperation): Promise<void>
     if (operation.kind === "append") {
       const current = await app.vault.read(existing);
       await app.vault.modify(existing, `${current}\n${operation.content}`);
-    } else {
-      await app.vault.modify(existing, operation.content);
+      return;
     }
+    if (operation.kind === "prepend") {
+      const current = await app.vault.read(existing);
+      const separator = current.trim().length > 0 ? "\n\n" : "";
+      await app.vault.modify(existing, `${operation.content}${separator}${current}`);
+      return;
+    }
+    await app.vault.modify(existing, operation.content);
     return;
   }
   await app.vault.create(path, operation.content);
