@@ -1,10 +1,11 @@
 import * as obsidian from "obsidian";
 import LLMWikiPlugin from "../src/main";
-import { LLMWikiSettingTab } from "../src/settings";
+import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "../src/settings";
 
 const notices = (obsidian.Notice as unknown as { messages: string[] }).messages;
 
 type Button = { buttonText?: string; disabled?: boolean; onclick?: () => void | Promise<void> };
+type Toggle = { value?: boolean; onchange?: (value: boolean) => Promise<void> };
 
 beforeEach(() => {
   notices.length = 0;
@@ -32,6 +33,27 @@ test("settings tab renders a button for testing the OpenAI connection", () => {
 
   const buttons = (tab.containerEl as unknown as { buttons: Button[] }).buttons;
   expect(buttons.some((button) => button.buttonText === "Test OpenAI connection")).toBe(true);
+});
+
+test("auto ingest is disabled by default", () => {
+  expect(DEFAULT_SETTINGS.autoIngestEnabled).toBe(false);
+});
+
+test("settings tab saves the auto ingest toggle", async () => {
+  const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin })();
+  plugin.app = { vault: { on: jest.fn(() => "event") } } as never;
+  const saveSettings = jest.spyOn(plugin, "saveSettings").mockResolvedValue();
+  const tab = new LLMWikiSettingTab({} as never, plugin);
+
+  tab.display();
+  const texts = (tab.containerEl as unknown as { texts: string[] }).texts;
+  const toggles = (tab.containerEl as unknown as { toggles: Toggle[] }).toggles;
+  expect(texts).toContain("Auto ingest raw file changes");
+  expect(toggles).toHaveLength(1);
+  await toggles[0].onchange!(true);
+
+  expect(plugin.settings.autoIngestEnabled).toBe(true);
+  expect(saveSettings).toHaveBeenCalledTimes(1);
 });
 
 test("OpenAI connection test reports success for HTTP 2xx", async () => {

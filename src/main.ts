@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { EventRef, Notice, Plugin, TAbstractFile, TFile } from "obsidian";
 import { parseChangePlan, validateChangePlan } from "./changePlan";
 import { t } from "./i18n";
 import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt } from "./prompts";
@@ -7,18 +7,23 @@ import { ChangePlanPreviewModal } from "./previewModal";
 import { findChangedRawFiles, findRawFileCandidates, ImageOcrRequest, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
 import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "./settings";
 import { LLMWikiPluginData, LLMWikiSettings } from "./types";
-import { listMarkdownFiles, readTextFile } from "./vaultOps";
+import { applyChangePlan, listMarkdownFiles, readTextFile } from "./vaultOps";
 
 export default class LLMWikiPlugin extends Plugin {
   settings: LLMWikiSettings = DEFAULT_SETTINGS;
   rawFileState: RawFileState = {};
   private statusBarItem?: HTMLElement;
+  private autoIngestTimer?: ReturnType<typeof setTimeout>;
+  private autoIngestEventRefs: EventRef[] = [];
+  private autoIngestRunning = false;
+  private autoIngestPending = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.statusBarItem = this.addStatusBarItem();
     this.setStatus(t("status.idle"));
     this.addSettingTab(new LLMWikiSettingTab(this.app, this));
+    this.registerAutoIngestListeners();
 
     this.addCommand({
       id: "ingest-active-source",
@@ -53,7 +58,47 @@ export default class LLMWikiPlugin extends Plugin {
     this.statusBarItem?.setText(message);
   }
 
-  private async ingestActiveSource(): Promise<void> {
+  enableAutoIngestListeners(): void {
+    if (this.autoIngestEventRefs.length > 0) return;
+    const createRef = this.app.vault.on("create", (file) => this.scheduleAutoIngest(file));
+    const modifyRef = this.app.vault.on("modify", (file) => this.scheduleAutoIngest(file));
+    this.autoIngestEventRefs = [createRef, modifyRef];
+    this.registerEvent(createRef);
+    this.registerEvent(modifyRef);
+  }
+
+  private registerAutoIngestListeners(): void {
+    if (!this.settings.autoIngestEnabled) return;
+    this.enableAutoIngestListeners();
+  }
+
+  private scheduleAutoIngest(file: TAbstractFile): void {
+    if (!(file instanceof TFile)) return;
+    if (!findRawFileCandidates([file], this.settings).sourceFiles.includes(file)) return;
+    if (this.autoIngestTimer) clearTimeout(this.autoIngestTimer);
+    this.autoIngestTimer = setTimeout(() => {
+      void this.runAutoIngest();
+    }, this.settings.autoIngestDebounceMs);
+  }
+
+  private async runAutoIngest(): Promise<void> {
+    if (this.autoIngestRunning) {
+      this.autoIngestPending = true;
+      return;
+    }
+    this.autoIngestRunning = true;
+    try {
+      await this.ingestActiveSource(true);
+    } finally {
+      this.autoIngestRunning = false;
+      if (this.autoIngestPending) {
+        this.autoIngestPending = false;
+        await this.runAutoIngest();
+      }
+    }
+  }
+
+  private async ingestActiveSource(autoApply = false): Promise<void> {
     if (!this.settings.openAIApiKey) {
       new Notice(t("notice.missingOpenAIKey"));
       return;
@@ -89,7 +134,7 @@ export default class LLMWikiPlugin extends Plugin {
       await this.runPrompt(prompt, async () => {
         this.rawFileState = updateRawFileState(this.rawFileState, changedRawFiles);
         await this.saveSettings();
-      });
+      }, autoApply);
     } catch (error) {
       const message = formatOpenAIErrorMessage(error, t("error.ingestFailed"));
       this.setStatus(t("status.error", { message }));
@@ -171,7 +216,7 @@ export default class LLMWikiPlugin extends Plugin {
     await this.runPrompt(prompt);
   }
 
-  private async runPrompt(prompt: string, onApplySuccess?: () => Promise<void>): Promise<void> {
+  private async runPrompt(prompt: string, onApplySuccess?: () => Promise<void>, autoApply = false): Promise<void> {
     if (!this.settings.openAIApiKey) {
       new Notice(t("notice.missingOpenAIKey"));
       return;
@@ -191,6 +236,16 @@ export default class LLMWikiPlugin extends Plugin {
       this.setStatus(validatingMessage);
       new Notice(validatingMessage);
       const plan = validateChangePlan(parseChangePlan(response), this.settings);
+      if (autoApply) {
+        const applyingMessage = t("status.applyingChanges");
+        this.setStatus(applyingMessage);
+        new Notice(applyingMessage);
+        await applyChangePlan(this.app, plan);
+        await onApplySuccess?.();
+        this.setStatus(t("status.applied"));
+        new Notice(t("notice.changesApplied"));
+        return;
+      }
       this.setStatus(t("status.reviewChanges"));
       new Notice(t("notice.reviewChanges"));
       new ChangePlanPreviewModal(this.app, plan, (message) => this.setStatus(message), onApplySuccess).open();

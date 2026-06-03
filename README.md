@@ -95,6 +95,7 @@ Open the plugin settings and configure:
 
 - **OpenAI API key**: API key for your OpenAI-compatible provider.
 - **OpenAI model**: model name to use.
+- **Auto ingest raw file changes**: disabled by default. When enabled, supported raw file changes are analyzed automatically after a short debounce and validated model changes are applied without opening the review modal.
 
 Third-party OpenAI-compatible providers can be used as long as the URL points directly to their `/v1/chat/completions` endpoint. Use **Test OpenAI connection** in settings to check whether the configured endpoint returns HTTP 2xx for the current URL, key, and model.
 
@@ -110,6 +111,8 @@ Third-party OpenAI-compatible providers can be used as long as the URL points di
    ```
 
 Despite the command name, the current implementation scans the configured raw folder and processes only new or changed supported raw files. Text/code-like files are read directly, HTML is converted to readable text, Office documents, spreadsheets, presentations, and RTF files are extracted locally, and text-layer PDFs are extracted directly. Scanned or image-only PDF pages and image-only PPTX slides use vision OCR, and supported image files are sent to the configured OpenAI-compatible model for OCR before the extracted text is ingested. Files that have already been successfully applied are skipped until their content changes.
+
+When **Auto ingest raw file changes** is enabled, the plugin watches the configured raw folder for supported file creations and modifications. After a short debounce, it runs the same ingest pipeline and automatically applies validated changes without opening the review modal. Auto ingest is disabled by default.
 
 The command flow is:
 

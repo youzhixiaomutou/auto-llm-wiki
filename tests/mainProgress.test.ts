@@ -1,11 +1,13 @@
 import * as obsidian from "obsidian";
 import LLMWikiPlugin from "../src/main";
-import { DEFAULT_SETTINGS } from "../src/settings";
+import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "../src/settings";
 
 const notices = (obsidian.Notice as unknown as { messages: string[] }).messages;
+const modals = (obsidian.Modal as unknown as { instances: unknown[] }).instances;
 
 beforeEach(() => {
   notices.length = 0;
+  modals.length = 0;
   (obsidian as unknown as { __setLanguage(language: string): void }).__setLanguage("en");
   jest.restoreAllMocks();
 });
@@ -18,6 +20,156 @@ test("onload initializes persistent status bar as idle", async () => {
   await plugin.onload();
 
   expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki: idle");
+});
+
+test("does not register raw auto-ingest listeners by default", async () => {
+  const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { registeredEvents: unknown[] } };
+  const plugin = new PluginMock();
+  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "key" });
+  plugin.app = {
+    vault: {
+      on: jest.fn()
+    }
+  } as never;
+
+  await plugin.onload();
+
+  expect((plugin.app as unknown as { vault: { on: jest.Mock } }).vault.on).not.toHaveBeenCalled();
+  expect(plugin.registeredEvents).toEqual([]);
+});
+
+test("registers raw auto-ingest listeners when enabled", async () => {
+  const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { registeredEvents: unknown[] } };
+  const plugin = new PluginMock();
+  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "key", autoIngestEnabled: true });
+  const eventRefs: string[] = [];
+  plugin.app = {
+    vault: {
+      on: jest.fn((eventName: string) => {
+        eventRefs.push(eventName);
+        return `event:${eventName}`;
+      })
+    }
+  } as never;
+
+  await plugin.onload();
+
+  expect(eventRefs).toEqual(["create", "modify"]);
+  expect(plugin.registeredEvents).toEqual(["event:create", "event:modify"]);
+});
+
+test("starts listening when auto ingest is enabled from settings without reload", async () => {
+  const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { registeredEvents: unknown[] } };
+  const plugin = new PluginMock();
+  const eventRefs: string[] = [];
+  jest.spyOn(plugin, "saveSettings").mockResolvedValue();
+  plugin.app = {
+    vault: {
+      on: jest.fn((eventName: string) => {
+        eventRefs.push(eventName);
+        return `event:${eventName}`;
+      })
+    }
+  } as never;
+  const tab = new LLMWikiSettingTab(plugin.app as never, plugin);
+
+  tab.display();
+  const toggles = (tab.containerEl as unknown as { toggles: Array<{ onchange?: (value: boolean) => Promise<void> }> }).toggles;
+  await toggles[0].onchange!(true);
+
+  expect(eventRefs).toEqual(["create", "modify"]);
+  expect(plugin.registeredEvents).toEqual(["event:create", "event:modify"]);
+});
+
+test("auto ingest ignores unsupported files outside the raw folder", async () => {
+  jest.useFakeTimers();
+  try {
+    const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+    const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin })();
+    jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "key", autoIngestEnabled: true, autoIngestDebounceMs: 10 });
+    const listeners = new Map<string, (file: obsidian.TFile) => void>();
+    plugin.app = {
+      vault: {
+        on: jest.fn((eventName: string, callback: (file: obsidian.TFile) => void) => {
+          listeners.set(eventName, callback);
+          return `event:${eventName}`;
+        })
+      }
+    } as never;
+    const ingestSpy = jest.spyOn(plugin as unknown as { ingestActiveSource(autoApply?: boolean): Promise<void> }, "ingestActiveSource");
+
+    await plugin.onload();
+    listeners.get("modify")!(new TFileMock("wiki/page.md"));
+    listeners.get("modify")!(new TFileMock("raw/tool.exe"));
+    await jest.advanceTimersByTimeAsync(10);
+
+    expect(ingestSpy).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("auto ingest applies validated changes without opening the review modal", async () => {
+  jest.useFakeTimers();
+  try {
+    jest.spyOn(obsidian, "requestUrl").mockResolvedValue({
+      status: 200,
+      text: JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          summary: "ok",
+          operations: [{ kind: "create", path: "wiki/source.md", content: "# Source", rationale: "test" }]
+        }) } }]
+      })
+    } as never);
+
+    const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+    const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } };
+    const rawFile = new TFileMock("raw/source.md");
+    const existing = new Set<string>();
+    const savedData: unknown[] = [];
+    const listeners = new Map<string, (file: obsidian.TFile) => void>();
+    const plugin = new PluginMock();
+    jest.spyOn(plugin, "loadData").mockResolvedValue({
+      openAIApiKey: "key",
+      autoIngestEnabled: true,
+      autoIngestDebounceMs: 10,
+      rawFileState: {}
+    });
+    jest.spyOn(plugin, "saveData").mockImplementation(async (data) => {
+      savedData.push(data);
+    });
+    plugin.app = {
+      vault: {
+        on: jest.fn((eventName: string, callback: (file: obsidian.TFile) => void) => {
+          listeners.set(eventName, callback);
+          return `event:${eventName}`;
+        }),
+        getFiles: () => [rawFile],
+        getAbstractFileByPath: (path: string) => existing.has(path) ? new TFileMock(path) : null,
+        createFolder: async (path: string) => {
+          existing.add(path);
+        },
+        create: async (path: string) => {
+          existing.add(path);
+        },
+        read: async (file: { path: string }) => {
+          if (file.path === "raw/source.md") return "source";
+          return "";
+        }
+      }
+    } as never;
+
+    await plugin.onload();
+    listeners.get("modify")!(rawFile);
+    await jest.advanceTimersByTimeAsync(10);
+
+    expect(modals).toHaveLength(0);
+    expect(existing.has("wiki/source.md")).toBe(true);
+    expect(JSON.stringify(savedData[savedData.length - 1])).toContain("raw/source.md");
+    expect(plugin.statusBarItems[0].history).toContain("Auto LLM Wiki: applied");
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("ingest command does not parse or OCR raw files without an API key", async () => {

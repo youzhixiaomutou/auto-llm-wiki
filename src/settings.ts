@@ -13,7 +13,9 @@ export const DEFAULT_SETTINGS: LLMWikiSettings = {
   provider: "openai",
   openAIApiUrl: "https://api.openai.com/v1/chat/completions",
   openAIApiKey: "",
-  openAIModel: "gpt-4.1-mini"
+  openAIModel: "gpt-4.1-mini",
+  autoIngestEnabled: false,
+  autoIngestDebounceMs: 3000
 };
 
 export class LLMWikiSettingTab extends PluginSettingTab {
@@ -37,6 +39,7 @@ export class LLMWikiSettingTab extends PluginSettingTab {
     this.addTextSetting(t("settings.openAIApiUrl.name"), t("settings.openAIApiUrl.desc"), "openAIApiUrl");
     this.addTextSetting(t("settings.openAIApiKey.name"), t("settings.openAIApiKey.desc"), "openAIApiKey", true);
     this.addTextSetting(t("settings.openAIModel.name"), t("settings.openAIModel.desc"), "openAIModel");
+    this.addToggleSetting(t("settings.autoIngestEnabled.name"), t("settings.autoIngestEnabled.desc"), "autoIngestEnabled");
     this.addOpenAIConnectionTest();
   }
 
@@ -83,6 +86,20 @@ export class LLMWikiSettingTab extends PluginSettingTab {
         if (secret) text.inputEl.type = "password";
         text.onChange(async (value) => {
           this.plugin.settings = { ...this.plugin.settings, [key]: value };
+          await this.plugin.saveSettings();
+        });
+      });
+  }
+
+  private addToggleSetting(name: string, desc: string, key: keyof Pick<LLMWikiSettings, "autoIngestEnabled">): void {
+    new Setting(this.containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addToggle((toggle) => {
+        toggle.setValue(Boolean(this.plugin.settings[key]));
+        toggle.onChange(async (value) => {
+          this.plugin.settings = { ...this.plugin.settings, [key]: value };
+          if (value) this.plugin.enableAutoIngestListeners();
           await this.plugin.saveSettings();
         });
       });

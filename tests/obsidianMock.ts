@@ -66,6 +66,20 @@ export class Setting {
     return this;
   }
 
+  addToggle(callback: (toggle: { value?: boolean; setValue(value: boolean): void; onChange(callback: (value: boolean) => Promise<void>): void }) => void): this {
+    const toggle: { value?: boolean; onchange?: (value: boolean) => Promise<void>; setValue(value: boolean): void; onChange(callback: (value: boolean) => Promise<void>): void } = {
+      setValue(value: boolean) {
+        toggle.value = value;
+      },
+      onChange(callback: (value: boolean) => Promise<void>) {
+        toggle.onchange = callback;
+      }
+    };
+    (this.containerEl as { toggles?: unknown[] }).toggles?.push(toggle);
+    callback(toggle);
+    return this;
+  }
+
   addButton(callback: (button: { buttonEl: { disabled?: boolean }; setButtonText(text: string): void; setDisabled(disabled: boolean): void; onClick(callback: () => Promise<void>): void }) => void): this {
     const button: { buttonText?: string; buttonEl: { disabled?: boolean }; disabled?: boolean; onclick?: () => Promise<void>; setButtonText(text: string): void; setDisabled(disabled: boolean): void; onClick(callback: () => Promise<void>): void } = {
       buttonEl: {},
@@ -96,8 +110,12 @@ export class Plugin {
   statusBarItems: Array<{ text: string; history: string[]; setText(text: string): void }> = [];
 
   async saveData(): Promise<void> {}
+  registeredEvents: unknown[] = [];
   addCommand(): void {}
   addSettingTab(): void {}
+  registerEvent(eventRef: unknown): void {
+    this.registeredEvents.push(eventRef);
+  }
   addStatusBarItem(): { text: string; setText(text: string): void } {
     const item = {
       text: "",
@@ -127,6 +145,7 @@ export function loadPdfJs(): Promise<unknown> {
 function createMockElement() {
   const element: {
     buttons: Array<{ onclick?: () => void | Promise<void>; disabled?: boolean; addClass(className?: string): void }>;
+    toggles: Array<{ onchange?: (value: boolean) => Promise<void>; value?: boolean }>;
     texts: string[];
     classes: string[];
     styles: Record<string, string>;
@@ -140,6 +159,7 @@ function createMockElement() {
     appendChild(): void;
   } = {
     buttons: [],
+    toggles: [],
     texts: [],
     classes: [],
     styles: {},
@@ -151,6 +171,7 @@ function createMockElement() {
     empty() {
       element.texts.length = 0;
       element.buttons.length = 0;
+      element.toggles.length = 0;
       element.classes.length = 0;
       element.styles = {};
     },
@@ -167,6 +188,7 @@ function createMockElement() {
       }
       const child = createMockElement();
       child.buttons = element.buttons;
+      child.toggles = element.toggles;
       child.texts = element.texts;
       child.classes = element.classes;
       child.styles = element.styles;
@@ -176,6 +198,7 @@ function createMockElement() {
     createDiv() {
       const child = createMockElement();
       child.buttons = element.buttons;
+      child.toggles = element.toggles;
       child.texts = element.texts;
       child.classes = element.classes;
       child.styles = element.styles;
