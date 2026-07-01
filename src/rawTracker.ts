@@ -1,6 +1,6 @@
 import * as JSZip from "jszip";
 import { App, TFile } from "obsidian";
-import { LLMWikiSettings } from "./types";
+import { LLMWikiSettings, RawFileState, RawFileStateEntry } from "./types";
 import { normalizePath } from "./changePlan";
 import { t } from "./i18n";
 import { isBinaryOfficeRawPath, isImageRawPath, isOpenXmlRawPath, isPdfRawPath, isSupportedRawPath, readRawFileWithParser } from "./rawParsers";
@@ -10,6 +10,8 @@ export interface ChangedRawFile {
   path: string;
   content: string;
   hash: string;
+  mtime?: number;
+  size?: number;
 }
 
 export type { ImageOcrProvider, ImageOcrRequest, PdfOcrProvider, PdfOcrRequest } from "./rawParsers";
@@ -25,10 +27,39 @@ export async function renderPdfPageToPngDataUrl(page: PdfPage, scale = 2): Promi
   return canvas.toDataURL("image/png");
 }
 
-export type RawFileState = Record<string, string>;
+export type { RawFileState, RawFileStateEntry } from "./types";
+
+type StoredRawFileEntry = string | RawFileStateEntry;
+
+function normalizeRawFileEntry(entry: StoredRawFileEntry | undefined): RawFileStateEntry | undefined {
+  if (entry === undefined) return undefined;
+  if (typeof entry === "string") return { hash: entry, mtime: -1, size: -1 };
+  return { hash: entry.hash, mtime: entry.mtime ?? -1, size: entry.size ?? -1 };
+}
+
+export function migrateRawFileState(state: Record<string, StoredRawFileEntry> | undefined): RawFileState {
+  const migrated: RawFileState = {};
+  if (!state) return migrated;
+  for (const [path, entry] of Object.entries(state)) {
+    const normalized = normalizeRawFileEntry(entry);
+    if (normalized) migrated[path] = normalized;
+  }
+  return migrated;
+}
 
 interface RawCandidateFile {
   path: string;
+}
+
+interface RawFileStat {
+  mtime: number;
+  size: number;
+}
+
+function readRawFileStat(file: RawCandidateFile): RawFileStat | undefined {
+  const stat = (file as { stat?: { mtime?: unknown; size?: unknown } }).stat;
+  if (!stat || typeof stat.mtime !== "number" || typeof stat.size !== "number") return undefined;
+  return { mtime: stat.mtime, size: stat.size };
 }
 
 export interface RawFileCandidates<T extends RawCandidateFile = RawCandidateFile> {
@@ -84,7 +115,7 @@ export function findRawFileCandidates<T extends RawCandidateFile>(files: T[], se
 export async function findChangedRawFiles(
   app: App,
   settings: LLMWikiSettings,
-  state: RawFileState,
+  state: Record<string, StoredRawFileEntry>,
   onPdfExtract?: (path: string) => void,
   pdfOcrProvider?: PdfOcrProvider,
   imageOcrProvider?: ImageOcrProvider
@@ -93,28 +124,34 @@ export async function findChangedRawFiles(
 
   const changedFiles: ChangedRawFile[] = [];
   for (const file of rawFiles) {
+    const stat = readRawFileStat(file);
+    const recorded = normalizeRawFileEntry(state[file.path]);
+    if (recorded && stat && recorded.mtime === stat.mtime && recorded.size === stat.size) {
+      continue;
+    }
+
     if (isOpenXmlRawPath(file.path)) {
       const binaryBuffer = await app.vault.readBinary(file as TFile);
       const hash = await hashOpenXmlContent(binaryBuffer);
-      if (state[file.path] === hash) continue;
+      if (recorded?.hash === hash) continue;
       const content = await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider);
-      changedFiles.push({ path: file.path, content, hash });
+      changedFiles.push({ path: file.path, content, hash, mtime: stat?.mtime, size: stat?.size });
       continue;
     }
 
     if (isImageRawPath(file.path) || isPdfRawPath(file.path) || isBinaryOfficeRawPath(file.path)) {
       const binaryBuffer = await app.vault.readBinary(file as TFile);
       const hash = hashBinaryContent(binaryBuffer);
-      if (state[file.path] === hash) continue;
+      if (recorded?.hash === hash) continue;
       const content = await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider);
-      changedFiles.push({ path: file.path, content, hash });
+      changedFiles.push({ path: file.path, content, hash, mtime: stat?.mtime, size: stat?.size });
       continue;
     }
 
     const content = await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider);
     const hash = hashContent(content);
-    if (state[file.path] !== hash) {
-      changedFiles.push({ path: file.path, content, hash });
+    if (recorded?.hash !== hash) {
+      changedFiles.push({ path: file.path, content, hash, mtime: stat?.mtime, size: stat?.size });
     }
   }
   return changedFiles;
@@ -133,7 +170,7 @@ async function readRawFileContent(
 export function updateRawFileState(state: RawFileState, files: ChangedRawFile[]): RawFileState {
   const nextState = { ...state };
   for (const file of files) {
-    nextState[file.path] = file.hash;
+    nextState[file.path] = { hash: file.hash, mtime: file.mtime ?? -1, size: file.size ?? -1 };
   }
   return nextState;
 }

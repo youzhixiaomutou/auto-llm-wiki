@@ -4,7 +4,7 @@ import { t } from "./i18n";
 import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt } from "./prompts";
 import { OpenAIProvider, OpenAIProviderError } from "./providers/OpenAIProvider";
 import { ChangePlanPreviewModal } from "./previewModal";
-import { findChangedRawFiles, findRawFileCandidates, ImageOcrRequest, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
+import { findChangedRawFiles, findRawFileCandidates, ImageOcrRequest, migrateRawFileState, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
 import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "./settings";
 import { LLMWikiPluginData, LLMWikiSettings } from "./types";
 import { applyChangePlan, listMarkdownFiles, readTextFile } from "./vaultOps";
@@ -47,7 +47,7 @@ export default class LLMWikiPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const data = await this.loadData() as (LLMWikiPluginData & Partial<LLMWikiSettings>) | undefined;
     this.settings = { ...DEFAULT_SETTINGS, ...data };
-    this.rawFileState = data?.rawFileState ?? {};
+    this.rawFileState = migrateRawFileState(data?.rawFileState);
   }
 
   async saveSettings(): Promise<void> {
@@ -257,7 +257,7 @@ export default class LLMWikiPlugin extends Plugin {
   }
 }
 
-function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string): string {
+export function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string): string {
   if (error instanceof OpenAIProviderError) {
     if (error.kind === "request") {
       return t("error.openAIRequestFailed", { message: error.message });
@@ -267,6 +267,12 @@ function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string): stri
     }
     if (error.kind === "invalid-json") {
       return t("error.openAIResponseInvalidJson");
+    }
+    if (error.kind === "truncated") {
+      return t("error.openAIResponseTruncated");
+    }
+    if (error.kind === "timeout") {
+      return t("error.openAIRequestTimedOut");
     }
   }
 

@@ -1,6 +1,6 @@
 import * as obsidian from "obsidian";
 import * as JSZip from "jszip";
-import { findChangedRawFiles, findRawFileCandidates, hashBinaryContent, hashContent, hashOpenXmlContent } from "../src/rawTracker";
+import { findChangedRawFiles, findRawFileCandidates, hashBinaryContent, hashContent, hashOpenXmlContent, migrateRawFileState } from "../src/rawTracker";
 import { DEFAULT_SETTINGS } from "../src/settings";
 
 beforeEach(() => {
@@ -55,6 +55,61 @@ test("findRawFileCandidates reports raw text, code, PDF, image, HTML, and Office
       { path: "raw/file.pptx" }
     ],
     pdfPaths: ["raw/中国中检福建公司【福利微课堂】第一期.pdf"]
+  });
+});
+
+test("findChangedRawFiles skips reading files whose mtime and size match recorded state", async () => {
+  let reads = 0;
+  const file = { path: "raw/a.md", stat: { mtime: 100, size: 5 } };
+  const app = {
+    vault: {
+      getFiles: () => [file],
+      read: async () => {
+        reads++;
+        return "content";
+      }
+    }
+  };
+  const state = { "raw/a.md": { hash: hashContent("content"), mtime: 100, size: 5 } };
+
+  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
+
+  expect(changed).toEqual([]);
+  expect(reads).toBe(0);
+});
+
+test("findChangedRawFiles re-reads a file whose size changed even if mtime matches", async () => {
+  const file = { path: "raw/a.md", stat: { mtime: 100, size: 9 } };
+  const app = {
+    vault: {
+      getFiles: () => [file],
+      read: async () => "updated content"
+    }
+  };
+  const state = { "raw/a.md": { hash: hashContent("old"), mtime: 100, size: 5 } };
+
+  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
+
+  expect(changed).toEqual([
+    { path: "raw/a.md", content: "updated content", hash: hashContent("updated content"), mtime: 100, size: 9 }
+  ]);
+});
+
+test("migrateRawFileState upgrades legacy string hashes to entries", () => {
+  const migrated = migrateRawFileState({ "raw/a.md": "abc123" });
+
+  expect(migrated).toEqual({ "raw/a.md": { hash: "abc123", mtime: -1, size: -1 } });
+});
+
+test("migrateRawFileState keeps existing entry objects and defaults missing data", () => {
+  const migrated = migrateRawFileState({
+    "raw/a.md": { hash: "h1", mtime: 10, size: 20 },
+    "raw/b.md": { hash: "h2" } as never
+  });
+
+  expect(migrated).toEqual({
+    "raw/a.md": { hash: "h1", mtime: 10, size: 20 },
+    "raw/b.md": { hash: "h2", mtime: -1, size: -1 }
   });
 });
 

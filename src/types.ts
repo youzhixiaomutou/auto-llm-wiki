@@ -1,9 +1,15 @@
 export type LLMProviderId = "openai";
 
-export type RawFileState = Record<string, string>;
+export interface RawFileStateEntry {
+  hash: string;
+  mtime: number;
+  size: number;
+}
+
+export type RawFileState = Record<string, RawFileStateEntry>;
 
 export interface LLMWikiPluginData {
-  rawFileState?: RawFileState;
+  rawFileState?: Record<string, string | RawFileStateEntry>;
 }
 
 export interface LLMWikiSettings {

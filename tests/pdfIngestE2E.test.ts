@@ -85,7 +85,7 @@ test("ingests a changed raw PDF into the wiki after review", async () => {
 
   expect(files.get("wiki/reports/report.md")?.content).toBe("# Report\nPDF first page");
   expect(savedData[savedData.length - 1]).toEqual(expect.objectContaining({
-    rawFileState: { "raw/report.pdf": hashBinaryContent(new ArrayBuffer(4)) }
+    rawFileState: { "raw/report.pdf": { hash: hashBinaryContent(new ArrayBuffer(4)), mtime: -1, size: -1 } }
   }));
 });
 
@@ -174,6 +174,6 @@ test("uses vision OCR fallback for scanned PDFs before ingesting", async () => {
   expect(render).toHaveBeenCalled();
   expect(files.get("wiki/reports/scanned.md")?.content).toBe("# 福利微课堂");
   expect(savedData[savedData.length - 1]).toEqual(expect.objectContaining({
-    rawFileState: { "raw/scanned.pdf": hashBinaryContent(new ArrayBuffer(4)) }
+    rawFileState: { "raw/scanned.pdf": { hash: hashBinaryContent(new ArrayBuffer(4)), mtime: -1, size: -1 } }
   }));
 });

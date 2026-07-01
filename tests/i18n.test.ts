@@ -58,6 +58,24 @@ test("provides zh raw parser error messages", () => {
     .toBe("图片中未找到文本：{path}");
 });
 
+test("provides English provider reliability error messages", () => {
+  const translations = ENGLISH_TRANSLATIONS as Record<string, string>;
+
+  expect(translations["error.openAIResponseTruncated"])
+    .toBe("OpenAI response was truncated. Try fewer sources at once or a model with a larger output limit.");
+  expect(translations["error.openAIRequestTimedOut"])
+    .toBe("OpenAI request timed out. Check your connection or try again.");
+});
+
+test("provides zh provider reliability error messages", () => {
+  const translations = SUPPORTED_TRANSLATIONS.zh as Record<string, string>;
+
+  expect(translations["error.openAIResponseTruncated"])
+    .toBe("OpenAI 响应被截断。请减少单次来源数量，或改用输出上限更大的模型。");
+  expect(translations["error.openAIRequestTimedOut"])
+    .toBe("OpenAI 请求超时。请检查网络连接或稍后重试。");
+});
+
 test("supported translation keys match Obsidian language codes", () => {
   expect(Object.keys(SUPPORTED_TRANSLATIONS).sort()).toEqual([...OBSIDIAN_LANGUAGE_CODES].sort());
 });

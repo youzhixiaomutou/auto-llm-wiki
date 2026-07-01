@@ -122,3 +122,112 @@ test("throws structured provider error when successful response is not JSON", as
     message: "Response was not JSON. Check the API URL; it should point to a chat completions endpoint."
   });
 });
+
+const okResponse = { status: 200, text: JSON.stringify({ choices: [{ message: { content: "ok" } }] }) };
+const noop = async () => undefined;
+
+test("retries on 5xx responses then succeeds", async () => {
+  let attempts = 0;
+  const provider = new OpenAIProvider(async () => {
+    attempts++;
+    return attempts < 3 ? { status: 503, text: "unavailable" } : okResponse;
+  }, { sleep: noop });
+
+  const result = await provider.complete({ apiKey: "k", model: "m", prompt: "p" });
+
+  expect(result).toBe("ok");
+  expect(attempts).toBe(3);
+});
+
+test("retries on network errors then succeeds", async () => {
+  let attempts = 0;
+  const provider = new OpenAIProvider(async () => {
+    attempts++;
+    if (attempts < 3) throw new Error("network down");
+    return okResponse;
+  }, { sleep: noop });
+
+  const result = await provider.complete({ apiKey: "k", model: "m", prompt: "p" });
+
+  expect(result).toBe("ok");
+  expect(attempts).toBe(3);
+});
+
+test("does not retry on 4xx responses", async () => {
+  let attempts = 0;
+  const provider = new OpenAIProvider(async () => {
+    attempts++;
+    return { status: 401, text: "bad key" };
+  }, { sleep: noop });
+
+  await expect(provider.complete({ apiKey: "bad", model: "m", prompt: "p" }))
+    .rejects.toMatchObject({ kind: "request", message: "401 bad key" });
+  expect(attempts).toBe(1);
+});
+
+test("gives up after maxAttempts on persistent 5xx", async () => {
+  let attempts = 0;
+  const provider = new OpenAIProvider(async () => {
+    attempts++;
+    return { status: 503, text: "unavailable" };
+  }, { sleep: noop, maxAttempts: 3 });
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" }))
+    .rejects.toMatchObject({ kind: "request", message: "503 unavailable" });
+  expect(attempts).toBe(3);
+});
+
+test("rethrows the last network error after exhausting retries", async () => {
+  let attempts = 0;
+  const provider = new OpenAIProvider(async () => {
+    attempts++;
+    throw new Error(`network down ${attempts}`);
+  }, { sleep: noop, maxAttempts: 3 });
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" }))
+    .rejects.toThrow("network down 3");
+  expect(attempts).toBe(3);
+});
+
+test("throws truncated error when finish_reason is length", async () => {
+  const provider = new OpenAIProvider(async () => ({
+    status: 200,
+    text: JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "partial answer that got cut" } }] })
+  }), { sleep: noop });
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" }))
+    .rejects.toMatchObject({ name: "OpenAIProviderError", kind: "truncated" });
+});
+
+test("does not flag truncation when finish_reason is stop", async () => {
+  const provider = new OpenAIProvider(async () => ({
+    status: 200,
+    text: JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "complete" } }] })
+  }), { sleep: noop });
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" })).resolves.toBe("complete");
+});
+
+test("times out a hung request", async () => {
+  const provider = new OpenAIProvider(
+    () => new Promise<never>(() => undefined),
+    { sleep: noop, maxAttempts: 1, timeoutMs: 10 }
+  );
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" }))
+    .rejects.toMatchObject({ name: "OpenAIProviderError", kind: "timeout" });
+}, 1000);
+
+test("retries after a timeout then succeeds", async () => {
+  let attempts = 0;
+  const provider = new OpenAIProvider(
+    () => {
+      attempts++;
+      return attempts < 2 ? new Promise<never>(() => undefined) : Promise.resolve(okResponse);
+    },
+    { sleep: noop, maxAttempts: 3, timeoutMs: 10 }
+  );
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" })).resolves.toBe("ok");
+  expect(attempts).toBe(2);
+}, 1000);
