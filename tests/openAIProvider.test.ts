@@ -1,4 +1,9 @@
+import * as obsidian from "obsidian";
 import { OpenAIProvider } from "../src/providers/OpenAIProvider";
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 test("sends chat completion request and returns text", async () => {
   const calls: Array<{ url: string; options: { body: string; headers: Record<string, string>; method: string } }> = [];
@@ -126,6 +131,31 @@ test("throws structured provider error when successful response is not JSON", as
 const okResponse = { status: 200, text: JSON.stringify({ choices: [{ message: { content: "ok" } }] }) };
 const noop = async () => undefined;
 
+test("default http client requests with throw:false so non-2xx is returned, not thrown", async () => {
+  const spy = jest.spyOn(obsidian, "requestUrl").mockResolvedValue({
+    status: 200,
+    text: JSON.stringify({ choices: [{ message: { content: "ok" } }] })
+  } as never);
+
+  await new OpenAIProvider().complete({ apiKey: "k", model: "m", prompt: "p" });
+
+  expect(spy).toHaveBeenCalledWith(expect.objectContaining({ throw: false }));
+});
+
+test("uses Retry-After header for backoff when retrying a 429", async () => {
+  const delays: number[] = [];
+  let attempts = 0;
+  const provider = new OpenAIProvider(async () => {
+    attempts++;
+    return attempts < 2
+      ? { status: 429, text: "rate limited", headers: { "retry-after": "2" } }
+      : okResponse;
+  }, { sleep: async (ms) => { delays.push(ms); }, maxAttempts: 3 });
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" })).resolves.toBe("ok");
+  expect(delays).toEqual([2000]);
+});
+
 test("retries on 5xx responses then succeeds", async () => {
   let attempts = 0;
   const provider = new OpenAIProvider(async () => {
@@ -208,6 +238,36 @@ test("does not flag truncation when finish_reason is stop", async () => {
   await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" })).resolves.toBe("complete");
 });
 
+test("maps length-truncation with empty content to truncated, not missing-content", async () => {
+  const provider = new OpenAIProvider(async () => ({
+    status: 200,
+    text: JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "" } }] })
+  }), { sleep: noop });
+
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" }))
+    .rejects.toMatchObject({ name: "OpenAIProviderError", kind: "truncated" });
+});
+
+test("completeVision returns partial OCR text even when the response is length-truncated", async () => {
+  const provider = new OpenAIProvider(async () => ({
+    status: 200,
+    text: JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "partial OCR text" } }] })
+  }), { sleep: noop });
+
+  await expect(provider.completeVision({ apiKey: "k", model: "m", prompt: "Transcribe", imageDataUrl: "data:image/png;base64,abc" }))
+    .resolves.toBe("partial OCR text");
+});
+
+test("times out a hung testConnection", async () => {
+  const provider = new OpenAIProvider(
+    () => new Promise<never>(() => undefined),
+    { maxAttempts: 1, timeoutMs: 10 }
+  );
+
+  await expect(provider.testConnection({ apiKey: "k", model: "m" }))
+    .rejects.toMatchObject({ name: "OpenAIProviderError", kind: "timeout" });
+}, 1000);
+
 test("times out a hung request", async () => {
   const provider = new OpenAIProvider(
     () => new Promise<never>(() => undefined),
@@ -218,16 +278,17 @@ test("times out a hung request", async () => {
     .rejects.toMatchObject({ name: "OpenAIProviderError", kind: "timeout" });
 }, 1000);
 
-test("retries after a timeout then succeeds", async () => {
+test("does not retry after a timeout (fails fast, no concurrent duplicate request)", async () => {
   let attempts = 0;
   const provider = new OpenAIProvider(
     () => {
       attempts++;
-      return attempts < 2 ? new Promise<never>(() => undefined) : Promise.resolve(okResponse);
+      return new Promise<never>(() => undefined);
     },
     { sleep: noop, maxAttempts: 3, timeoutMs: 10 }
   );
 
-  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" })).resolves.toBe("ok");
-  expect(attempts).toBe(2);
+  await expect(provider.complete({ apiKey: "k", model: "m", prompt: "p" }))
+    .rejects.toMatchObject({ name: "OpenAIProviderError", kind: "timeout" });
+  expect(attempts).toBe(1);
 }, 1000);

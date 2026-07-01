@@ -137,3 +137,20 @@ test("surfaces a truncated-response error during ingest without applying changes
   expect(modals).toHaveLength(0);
   expect(savedData).toHaveLength(0);
 });
+
+test("re-stamps an unchanged legacy-state file so later scans can fast-path", async () => {
+  const requestSpy = jest.spyOn(obsidian, "requestUrl");
+  const { plugin, reads, savedData } = setup(
+    [{ path: "raw/note.md", content: "hello", stat: { mtime: 900, size: 5 } }],
+    { openAIApiKey: "key", rawFileState: { "raw/note.md": hashContent("hello") } }
+  );
+
+  await plugin.onload();
+  await runIngest(plugin);
+
+  expect(requestSpy).not.toHaveBeenCalled();
+  expect(reads).toContain("raw/note.md");
+  expect(savedData[savedData.length - 1]).toEqual(expect.objectContaining({
+    rawFileState: { "raw/note.md": { hash: hashContent("hello"), mtime: 900, size: 5 } }
+  }));
+});

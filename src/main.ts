@@ -112,11 +112,18 @@ export default class LLMWikiPlugin extends Plugin {
       const candidateMessage = this.formatRawCandidateMessage(candidates.sourceFiles.length, candidates.pdfPaths);
       this.setStatus(candidateMessage);
       new Notice(candidateMessage);
-      const changedRawFiles = await findChangedRawFiles(this.app, this.settings, this.rawFileState, (path) => {
+      const scan = await findChangedRawFiles(this.app, this.settings, this.rawFileState, (path) => {
         const message = t("status.extractingPdf", { path });
         this.setStatus(message);
         new Notice(message);
       }, (request) => this.ocrPdfPage(request), (request) => this.ocrImage(request));
+      // Persist refreshed mtime/size for confirmed-unchanged files immediately (cache
+      // maintenance, independent of ingest) so the fast-path engages on later scans.
+      if (Object.keys(scan.stamps).length > 0) {
+        this.rawFileState = { ...this.rawFileState, ...scan.stamps };
+        await this.saveSettings();
+      }
+      const changedRawFiles = scan.changed;
       if (changedRawFiles.length === 0) {
         this.setStatus(t("status.noRawChanges"));
         new Notice(t("notice.noRawChanges"));

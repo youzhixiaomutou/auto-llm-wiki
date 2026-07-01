@@ -72,7 +72,7 @@ test("findChangedRawFiles skips reading files whose mtime and size match recorde
   };
   const state = { "raw/a.md": { hash: hashContent("content"), mtime: 100, size: 5 } };
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
 
   expect(changed).toEqual([]);
   expect(reads).toBe(0);
@@ -88,11 +88,32 @@ test("findChangedRawFiles re-reads a file whose size changed even if mtime match
   };
   const state = { "raw/a.md": { hash: hashContent("old"), mtime: 100, size: 5 } };
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
 
   expect(changed).toEqual([
     { path: "raw/a.md", content: "updated content", hash: hashContent("updated content"), mtime: 100, size: 9 }
   ]);
+});
+
+test("findChangedRawFiles re-stamps mtime/size for a file confirmed unchanged (legacy state)", async () => {
+  const reads: string[] = [];
+  const file = { path: "raw/a.md", stat: { mtime: 900, size: 5 } };
+  const app = {
+    vault: {
+      getFiles: () => [file],
+      read: async (f: { path: string }) => {
+        reads.push(f.path);
+        return "hello";
+      }
+    }
+  };
+  const state = { "raw/a.md": hashContent("hello") };
+
+  const { changed, stamps } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
+
+  expect(changed).toEqual([]);
+  expect(reads).toContain("raw/a.md");
+  expect(stamps).toEqual({ "raw/a.md": { hash: hashContent("hello"), mtime: 900, size: 5 } });
 });
 
 test("migrateRawFileState upgrades legacy string hashes to entries", () => {
@@ -139,7 +160,7 @@ test("findChangedRawFiles returns new and changed markdown files only", async ()
     "raw/unchanged.md": hashContent("same")
   };
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, state);
 
   expect(changed).toEqual([
     { path: "raw/new.md", content: "new", hash: hashContent("new") },
@@ -175,7 +196,7 @@ test("findChangedRawFiles extracts changed raw PDF text", async () => {
     }
   };
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {});
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {});
 
   expect(changed).toEqual([
     { path: "raw/source.md", content: "markdown", hash: hashContent("markdown") },
@@ -201,7 +222,7 @@ test("findChangedRawFiles extracts raw PDFs with uppercase extensions", async ()
     }
   };
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {});
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {});
 
   expect(changed).toEqual([
     { path: "raw/REPORT.PDF", content: "Uppercase PDF", hash: hashBinaryContent(new ArrayBuffer(4)) }
@@ -227,7 +248,7 @@ test("findChangedRawFiles extracts the reported Chinese PDF filename", async () 
     }
   };
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {});
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {});
 
   expect(changed).toEqual([
     { path, content: "福利微课堂内容", hash: hashBinaryContent(new ArrayBuffer(4)) }
@@ -253,7 +274,7 @@ test("findChangedRawFiles respects raw folders configured with a trailing slash"
     }
   };
 
-  const changed = await findChangedRawFiles(app as never, { ...DEFAULT_SETTINGS, rawFolder: "raw/" }, {});
+  const { changed } = await findChangedRawFiles(app as never, { ...DEFAULT_SETTINGS, rawFolder: "raw/" }, {});
 
   expect(changed).toEqual([
     { path, content: "Trailing slash", hash: hashBinaryContent(new ArrayBuffer(4)) }
@@ -278,7 +299,7 @@ test("findChangedRawFiles falls back to OCR when a PDF has no text layer", async
   };
   const ocrProvider = jest.fn(async () => "OCR 福利微课堂");
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {}, undefined, ocrProvider);
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {}, undefined, ocrProvider);
 
   expect(ocrProvider).toHaveBeenCalledWith({ page, path: "raw/scanned.pdf", pageNumber: 1 });
   expect(changed).toEqual([
@@ -317,7 +338,7 @@ test("findChangedRawFiles skips PDF parsing and OCR for unchanged raw PDFs", asy
   };
   const pdfOcrProvider = jest.fn(async () => "OCR text");
 
-  const changed = await findChangedRawFiles(
+  const { changed } = await findChangedRawFiles(
     app as never,
     DEFAULT_SETTINGS,
     { "raw/scanned.pdf": hashBinaryContent(pdfBuffer) },
@@ -340,7 +361,7 @@ test("findChangedRawFiles extracts changed raw image text through OCR", async ()
   };
   const imageOcrProvider = jest.fn(async () => "Screenshot text");
 
-  const changed = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {}, undefined, undefined, imageOcrProvider);
+  const { changed } = await findChangedRawFiles(app as never, DEFAULT_SETTINGS, {}, undefined, undefined, imageOcrProvider);
 
   expect(imageOcrProvider).toHaveBeenCalledTimes(1);
   expect(imageOcrProvider).toHaveBeenCalledWith({ path: "raw/screenshot.png", imageDataUrl: "data:image/png;base64,AQID" });
@@ -360,7 +381,7 @@ test("findChangedRawFiles skips OCR for unchanged raw images", async () => {
   };
   const imageOcrProvider = jest.fn(async () => "Screenshot text");
 
-  const changed = await findChangedRawFiles(
+  const { changed } = await findChangedRawFiles(
     app as never,
     DEFAULT_SETTINGS,
     { "raw/screenshot.png": hashBinaryContent(imageBuffer) },
@@ -385,7 +406,7 @@ test("findChangedRawFiles skips PPTX parsing and OCR when binary content is unch
   };
   const imageOcrProvider = jest.fn(async () => "Slide OCR text");
 
-  const changed = await findChangedRawFiles(
+  const { changed } = await findChangedRawFiles(
     app as never,
     DEFAULT_SETTINGS,
     { "raw/deck.pptx": await hashOpenXmlContent(pptxBuffer) },
@@ -417,7 +438,7 @@ test("findChangedRawFiles skips OpenXML metadata-only PPTX changes before OCR", 
   };
   const imageOcrProvider = jest.fn(async () => "unstable OCR text");
 
-  const changed = await findChangedRawFiles(
+  const { changed } = await findChangedRawFiles(
     app as never,
     DEFAULT_SETTINGS,
     { "raw/deck.pptx": await hashOpenXmlContent(firstBuffer) },
@@ -446,7 +467,7 @@ test("findChangedRawFiles detects OpenXML PPTX slide content changes", async () 
     }
   };
 
-  const changed = await findChangedRawFiles(
+  const { changed } = await findChangedRawFiles(
     app as never,
     DEFAULT_SETTINGS,
     { "raw/deck.pptx": await hashOpenXmlContent(unchangedBuffer) }

@@ -10,12 +10,13 @@ type HttpRequest = {
   };
 };
 
-type HttpResponse = { status: number; text: string };
+type HttpResponse = { status: number; text: string; headers?: Record<string, string> };
 type HttpClient = (request: HttpRequest) => Promise<HttpResponse>;
 const DEFAULT_OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_TIMEOUT_MS = 120000;
 const RETRY_BASE_DELAY_MS = 500;
+const MAX_RETRY_AFTER_MS = 60000;
 
 interface OpenAIProviderOptions {
   sleep?: (ms: number) => Promise<void>;
@@ -36,6 +37,14 @@ function isRetryableStatus(status: number): boolean {
 
 function retryDelayMs(attempt: number): number {
   return RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+}
+
+function retryAfterMs(response: HttpResponse): number | undefined {
+  const raw = response.headers?.["retry-after"] ?? response.headers?.["Retry-After"];
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
 }
 
 export class OpenAIProvider implements LLMProvider {
@@ -66,11 +75,15 @@ export class OpenAIProvider implements LLMProvider {
       try {
         const response = await this.withTimeout(this.httpClient(request));
         if (attempt < this.maxAttempts && isRetryableStatus(response.status)) {
-          await this.sleep(retryDelayMs(attempt));
+          const delay = (response.status === 429 ? retryAfterMs(response) : undefined) ?? retryDelayMs(attempt);
+          await this.sleep(delay);
           continue;
         }
         return response;
       } catch (error) {
+        // A timeout is not retried: requestUrl cannot be cancelled, so retrying would
+        // leave the original request running and fire a concurrent, separately-billed one.
+        if (error instanceof OpenAIProviderError && error.kind === "timeout") throw error;
         if (attempt >= this.maxAttempts) throw error;
         await this.sleep(retryDelayMs(attempt));
       }
@@ -81,10 +94,12 @@ export class OpenAIProvider implements LLMProvider {
     return this.completeMessages(request, [
       { role: "system", content: "You are a careful Auto LLM Wiki maintainer. Return strict JSON only." },
       { role: "user", content: request.prompt }
-    ]);
+    ], true);
   }
 
   async completeVision(request: VisionCompleteRequest): Promise<string> {
+    // OCR is best-effort: a length-truncated transcription still carries usable text,
+    // so vision responses are not rejected on truncation (unlike the strict-JSON path).
     return this.completeMessages(request, [
       { role: "system", content: "You transcribe visible text from document images. Return plain text only." },
       {
@@ -94,11 +109,11 @@ export class OpenAIProvider implements LLMProvider {
           { type: "image_url", image_url: { url: request.imageDataUrl } }
         ]
       }
-    ]);
+    ], false);
   }
 
   async testConnection(request: ConnectionTestRequest): Promise<void> {
-    const response = await this.httpClient({
+    const response = await this.withTimeout(this.httpClient({
       url: request.apiUrl || DEFAULT_OPENAI_API_URL,
       options: {
         method: "POST",
@@ -112,7 +127,7 @@ export class OpenAIProvider implements LLMProvider {
           max_tokens: 1
         })
       }
-    });
+    }));
     if (response.status < 200 || response.status >= 300) {
       throw new OpenAIProviderError("connection", `${response.status} ${response.text}`);
     }
@@ -120,7 +135,8 @@ export class OpenAIProvider implements LLMProvider {
 
   private async completeMessages(
     request: CompleteRequest,
-    messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>
+    messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>,
+    rejectOnTruncation = false
   ): Promise<string> {
     const response = await this.sendWithRetry({
       url: request.apiUrl || DEFAULT_OPENAI_API_URL,
@@ -145,10 +161,12 @@ export class OpenAIProvider implements LLMProvider {
     const parsed = parseOpenAIResponse(response.text);
     const choice = parsed.choices?.[0];
     const content = choice?.message?.content;
-    if (!content) throw new OpenAIProviderError("missing-content", "Response did not include message content");
-    if (choice?.finish_reason === "length") {
+    // Check truncation before the empty-content guard: a response truncated so early
+    // that it carries no content must still be reported as truncated, not missing-content.
+    if (rejectOnTruncation && choice?.finish_reason === "length") {
       throw new OpenAIProviderError("truncated", "Response was truncated before completion");
     }
+    if (!content) throw new OpenAIProviderError("missing-content", "Response did not include message content");
     return content;
   }
 }
@@ -166,10 +184,14 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 async function defaultHttpClient(request: HttpRequest): Promise<HttpResponse> {
-  return requestUrl({
+  // throw:false so requestUrl resolves with the status on 4xx/5xx instead of throwing,
+  // letting sendWithRetry/completeMessages apply status-based retry and error handling.
+  const response = await requestUrl({
     url: request.url,
     method: request.options.method,
     headers: request.options.headers,
-    body: request.options.body
+    body: request.options.body,
+    throw: false
   });
+  return { status: response.status, text: response.text, headers: response.headers };
 }
