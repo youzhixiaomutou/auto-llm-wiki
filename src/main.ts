@@ -1,13 +1,15 @@
 import { EventRef, Notice, Plugin, TAbstractFile, TFile } from "obsidian";
 import { parseChangePlan, validateChangePlan } from "./changePlan";
 import { t } from "./i18n";
-import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt } from "./prompts";
+import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt, buildQuerySelectionPrompt, parseSelectedQueryPages } from "./prompts";
 import { OpenAIProvider, OpenAIProviderError } from "./providers/OpenAIProvider";
 import { ChangePlanPreviewModal } from "./previewModal";
 import { findChangedRawFiles, findRawFileCandidates, ImageOcrRequest, migrateRawFileState, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
 import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "./settings";
 import { LLMWikiPluginData, LLMWikiSettings } from "./types";
-import { applyChangePlan, listMarkdownFiles, readTextFile } from "./vaultOps";
+import { applyChangePlan, listMarkdownFilePaths, listMarkdownFiles, readTextFile, readWikiPages } from "./vaultOps";
+
+const QUERY_MAX_PAGES = 12;
 
 export default class LLMWikiPlugin extends Plugin {
   settings: LLMWikiSettings = DEFAULT_SETTINGS;
@@ -201,17 +203,47 @@ export default class LLMWikiPlugin extends Plugin {
   private async queryWiki(): Promise<void> {
     const question = window.prompt(t("prompt.queryQuestion"));
     if (!question) return;
-    const readingMessage = t("status.readingVaultContext");
-    this.setStatus(readingMessage);
-    new Notice(readingMessage);
-    const wikiPages = await listMarkdownFiles(this.app, this.settings.wikiFolder);
-    const prompt = buildQueryPrompt({
-      index: await readTextFile(this.app, this.settings.indexPath),
-      log: await readTextFile(this.app, this.settings.logPath),
-      question,
-      wikiPages: wikiPages.slice(0, 20)
-    }, this.settings);
-    await this.runPrompt(prompt);
+    if (!this.settings.openAIApiKey) {
+      new Notice(t("notice.missingOpenAIKey"));
+      return;
+    }
+    try {
+      const readingMessage = t("status.readingVaultContext");
+      this.setStatus(readingMessage);
+      new Notice(readingMessage);
+      const index = await readTextFile(this.app, this.settings.indexPath);
+      const pagePaths = listMarkdownFilePaths(this.app, this.settings.wikiFolder);
+      const selectedPaths = await this.selectRelevantPages(index, question, pagePaths);
+      const wikiPages = await readWikiPages(this.app, selectedPaths);
+      const prompt = buildQueryPrompt({
+        index,
+        log: await readTextFile(this.app, this.settings.logPath),
+        question,
+        wikiPages
+      }, this.settings);
+      await this.runPrompt(prompt);
+    } catch (error) {
+      const message = formatOpenAIErrorMessage(error, t("error.requestFailed"));
+      this.setStatus(t("status.error", { message }));
+      new Notice(message);
+    }
+  }
+
+  // Karpathy-style query: read the index first and let the model pick the relevant pages,
+  // then drill into only those. Skip the extra call when the wiki is small enough to send whole.
+  private async selectRelevantPages(index: string, question: string, pagePaths: string[]): Promise<string[]> {
+    if (pagePaths.length <= QUERY_MAX_PAGES) return pagePaths;
+    const selectingMessage = t("status.selectingPages");
+    this.setStatus(selectingMessage);
+    new Notice(selectingMessage);
+    const provider = this.createProvider();
+    const response = await provider.complete({
+      apiKey: this.settings.openAIApiKey,
+      apiUrl: this.settings.openAIApiUrl,
+      model: this.settings.openAIModel,
+      prompt: buildQuerySelectionPrompt({ index, question, pagePaths }, this.settings)
+    });
+    return parseSelectedQueryPages(response, pagePaths, QUERY_MAX_PAGES);
   }
 
   private async lintWiki(): Promise<void> {

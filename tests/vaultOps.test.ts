@@ -1,5 +1,5 @@
 import * as obsidian from "obsidian";
-import { applyChangePlan, ensureMarkdownPath, isRawPath } from "../src/vaultOps";
+import { applyChangePlan, ensureMarkdownPath, isRawPath, listMarkdownFilePaths, readWikiPages } from "../src/vaultOps";
 import { DEFAULT_SETTINGS } from "../src/settings";
 
 test("detects raw paths", () => {
@@ -64,6 +64,120 @@ test("prepends content before an existing markdown file", async () => {
   });
 
   expect(modify).toHaveBeenCalledWith(file, "new entry\n\nolder entry");
+});
+
+test("listMarkdownFilePaths returns wiki page paths without reading content", () => {
+  const read = jest.fn();
+  const app = {
+    vault: {
+      getMarkdownFiles: () => [{ path: "wiki/a.md" }, { path: "wiki/b.md" }, { path: "raw/c.md" }],
+      read
+    }
+  };
+
+  const paths = listMarkdownFilePaths(app as never, "wiki");
+
+  expect(paths).toEqual(["wiki/a.md", "wiki/b.md"]);
+  expect(read).not.toHaveBeenCalled();
+});
+
+test("readWikiPages reads only the requested existing pages", async () => {
+  const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+  const store = new Map<string, string>([["wiki/a.md", "A"], ["wiki/b.md", "B"]]);
+  const readPaths: string[] = [];
+  const app = {
+    vault: {
+      getAbstractFileByPath: (path: string) => (store.has(path) ? new TFileMock(path) : null),
+      read: async (file: { path: string }) => {
+        readPaths.push(file.path);
+        return store.get(file.path) ?? "";
+      }
+    }
+  };
+
+  const pages = await readWikiPages(app as never, ["wiki/a.md", "wiki/missing.md"]);
+
+  expect(pages).toEqual([{ path: "wiki/a.md", content: "A" }]);
+  expect(readPaths).toEqual(["wiki/a.md"]);
+});
+
+test("pre-validates the plan and writes nothing when a create targets an existing file", async () => {
+  const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+  const store = new Map<string, string>([["wiki/exists.md", "e"]]);
+  const created: string[] = [];
+  const app = {
+    vault: {
+      getAbstractFileByPath: (path: string) => (store.has(path) ? new TFileMock(path) : null),
+      read: async (file: { path: string }) => store.get(file.path) ?? "",
+      create: async (path: string, content: string) => { created.push(path); store.set(path, content); },
+      modify: async () => undefined,
+      delete: async () => undefined,
+      createFolder: async () => undefined
+    }
+  };
+
+  await expect(applyChangePlan(app as never, {
+    summary: "x",
+    operations: [
+      { kind: "create", path: "wiki/new.md", content: "a", rationale: "r" },
+      { kind: "create", path: "wiki/exists.md", content: "b", rationale: "r" }
+    ]
+  })).rejects.toThrow();
+
+  expect(created).toEqual([]);
+});
+
+test("rejects writing to a path occupied by a folder", async () => {
+  const app = {
+    vault: {
+      getAbstractFileByPath: (path: string) => (path === "wiki/foo.md" ? { path } : null),
+      read: async () => "",
+      create: jest.fn(),
+      modify: jest.fn(),
+      delete: jest.fn(),
+      createFolder: async () => undefined
+    }
+  };
+
+  await expect(applyChangePlan(app as never, {
+    summary: "x",
+    operations: [{ kind: "update", path: "wiki/foo.md", content: "a", rationale: "r" }]
+  })).rejects.toThrow("a folder exists");
+
+  expect(app.vault.create).not.toHaveBeenCalled();
+  expect(app.vault.modify).not.toHaveBeenCalled();
+});
+
+test("rolls back created and modified files when a later operation fails", async () => {
+  const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+  const store = new Map<string, string>([["wiki/b.md", "original-b"]]);
+  const deleted: string[] = [];
+  const app = {
+    vault: {
+      getAbstractFileByPath: (path: string) => (store.has(path) ? new TFileMock(path) : null),
+      read: async (file: { path: string }) => store.get(file.path) ?? "",
+      create: async (path: string, content: string) => {
+        if (path === "wiki/c.md") throw new Error("disk fail");
+        store.set(path, content);
+      },
+      modify: async (file: { path: string }, content: string) => { store.set(file.path, content); },
+      delete: async (file: { path: string }) => { deleted.push(file.path); store.delete(file.path); },
+      createFolder: async () => undefined
+    }
+  };
+
+  await expect(applyChangePlan(app as never, {
+    summary: "x",
+    operations: [
+      { kind: "create", path: "wiki/a.md", content: "new-a", rationale: "r" },
+      { kind: "update", path: "wiki/b.md", content: "changed-b", rationale: "r" },
+      { kind: "create", path: "wiki/c.md", content: "x", rationale: "r" }
+    ]
+  })).rejects.toThrow("disk fail");
+
+  expect(store.has("wiki/a.md")).toBe(false);
+  expect(deleted).toContain("wiki/a.md");
+  expect(store.get("wiki/b.md")).toBe("original-b");
 });
 
 test("creates missing markdown file for prepend operations", async () => {

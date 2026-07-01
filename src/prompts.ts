@@ -52,6 +52,48 @@ Relevant wiki pages:
 ${formatWikiPages(context.wikiPages ?? [])}`;
 }
 
+export function buildQuerySelectionPrompt(
+  context: { index: string; question: string; pagePaths: string[] },
+  settings: LLMWikiSettings = DEFAULT_SETTINGS
+): string {
+  return `You are selecting which wiki pages are most relevant to a question. Choose only from the provided page paths.
+
+Question: ${context.question}
+
+Current index:
+${context.index}
+
+Available page paths:
+${context.pagePaths.join("\n")}
+
+Return only a JSON array of the most relevant page paths (fewer is better), for example ["${settings.wikiFolder}/example.md"]. Do not include any other text.`;
+}
+
+export function parseSelectedQueryPages(response: string, availablePaths: string[], limit: number): string[] {
+  const available = new Set(availablePaths);
+  const parsed = extractJsonArray(response);
+  const selected = Array.isArray(parsed)
+    ? parsed.filter((value): value is string => typeof value === "string" && available.has(value))
+    : [];
+  const deduped = Array.from(new Set(selected));
+  return deduped.length > 0 ? deduped.slice(0, limit) : availablePaths.slice(0, limit);
+}
+
+function extractJsonArray(text: string): unknown {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const match = trimmed.match(/\[[\s\S]*\]/);
+    if (!match) return undefined;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
 export function buildLintPrompt(context: WikiContext, settings: LLMWikiSettings = DEFAULT_SETTINGS): string {
   return `You lint a persistent LLM Wiki. Look for contradictions, stale claims, orphan pages, missing cross-references, important concepts without pages, and data gaps. Save the report as a wiki markdown page if useful.
 

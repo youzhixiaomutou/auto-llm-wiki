@@ -76,6 +76,13 @@ test("provides zh provider reliability error messages", () => {
     .toBe("OpenAI 请求超时。请检查网络连接或稍后重试。");
 });
 
+test("ingest command label reflects that it ingests changed raw files", () => {
+  expect((ENGLISH_TRANSLATIONS as Record<string, string>)["command.ingestActiveSource"])
+    .toBe("Ingest changed raw files into Auto LLM Wiki");
+  expect((SUPPORTED_TRANSLATIONS.zh as Record<string, string>)["command.ingestActiveSource"])
+    .toBe("将变更的原始文件导入 Auto LLM Wiki");
+});
+
 test("supported translation keys match Obsidian language codes", () => {
   expect(Object.keys(SUPPORTED_TRANSLATIONS).sort()).toEqual([...OBSIDIAN_LANGUAGE_CODES].sort());
 });

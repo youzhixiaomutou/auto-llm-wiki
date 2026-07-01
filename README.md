@@ -15,6 +15,7 @@ Auto LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. I
 - Generate a structured JSON change plan for wiki updates.
 - Preview proposed changes before writing anything to your vault.
 - Apply changes only after user confirmation.
+- Apply change plans atomically: validate the whole plan first and roll back on failure so the vault is never left half-written.
 - Keep raw sources and assets read-only.
 - Maintain configurable wiki, index, and log paths.
 - Show persistent command progress in the Obsidian status bar.
@@ -109,10 +110,10 @@ Third-party OpenAI-compatible providers can be used as long as the URL points di
 2. Run the command:
 
    ```text
-   Ingest active source into Auto LLM Wiki
+   Ingest changed raw files into Auto LLM Wiki
    ```
 
-Despite the command name, the current implementation scans the configured raw folder and processes only new or changed supported raw files. Text/code-like files are read directly, HTML is converted to readable text, Office documents, spreadsheets, presentations, and RTF files are extracted locally, and text-layer PDFs are extracted directly. Scanned or image-only PDF pages and image-only PPTX slides use vision OCR, and supported image files are sent to the configured OpenAI-compatible model for OCR before the extracted text is ingested. Files that have already been successfully applied are skipped until their content changes.
+The command scans the configured raw folder and processes all new or changed supported raw files. Text/code-like files are read directly, HTML is converted to readable text, Office documents, spreadsheets, presentations, and RTF files are extracted locally, and text-layer PDFs are extracted directly. Scanned or image-only PDF pages and image-only PPTX slides use vision OCR, and supported image files are sent to the configured OpenAI-compatible model for OCR before the extracted text is ingested. Files that have already been successfully applied are skipped until their content changes.
 
 When **Auto ingest raw file changes** is enabled, the plugin watches the configured raw folder for supported file creations and modifications. After a short debounce, it runs the same ingest pipeline and automatically applies validated changes without opening the review modal. Auto ingest is disabled by default.
 
@@ -134,7 +135,7 @@ Run:
 Query Auto LLM Wiki
 ```
 
-The plugin reads wiki context and asks the model to return a saveable change plan. You can review and apply the proposed result.
+The plugin reads the index first; for larger wikis it asks the model which pages are relevant and drills into only those (index-first retrieval), then asks the model to return a saveable change plan. You can review and apply the proposed result.
 
 ### Lint the wiki
 

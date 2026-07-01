@@ -1,4 +1,4 @@
-import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt } from "../src/prompts";
+import { buildIngestPrompt, buildLintPrompt, buildQueryPrompt, buildQuerySelectionPrompt, parseSelectedQueryPages } from "../src/prompts";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { __setLanguage } from "./obsidianMock";
 
@@ -41,6 +41,37 @@ test("lint prompt asks for contradictions and orphan pages", () => {
   const prompt = buildLintPrompt({ index: "# Index", log: "# Log", wikiPages: [{ path: "wiki/a.md", content: "A" }] });
   expect(prompt).toContain("contradictions");
   expect(prompt).toContain("orphan");
+});
+
+test("query selection prompt lists page paths and asks for a JSON array", () => {
+  const prompt = buildQuerySelectionPrompt({
+    index: "# Index",
+    question: "What is X?",
+    pagePaths: ["wiki/x.md", "wiki/y.md"]
+  });
+  expect(prompt).toContain("What is X?");
+  expect(prompt).toContain("wiki/x.md");
+  expect(prompt).toContain("wiki/y.md");
+  expect(prompt).toContain("JSON array");
+});
+
+test("parseSelectedQueryPages keeps only known paths and caps the count", () => {
+  const selected = parseSelectedQueryPages(
+    '["wiki/a.md","wiki/b.md","wiki/ghost.md","wiki/c.md"]',
+    ["wiki/a.md", "wiki/b.md", "wiki/c.md", "wiki/d.md"],
+    2
+  );
+  expect(selected).toEqual(["wiki/a.md", "wiki/b.md"]);
+});
+
+test("parseSelectedQueryPages parses fenced JSON", () => {
+  const selected = parseSelectedQueryPages("```json\n[\"wiki/a.md\"]\n```", ["wiki/a.md", "wiki/b.md"], 5);
+  expect(selected).toEqual(["wiki/a.md"]);
+});
+
+test("parseSelectedQueryPages falls back to the first pages when the response is unusable", () => {
+  const selected = parseSelectedQueryPages("all pages are relevant", ["wiki/a.md", "wiki/b.md", "wiki/c.md"], 2);
+  expect(selected).toEqual(["wiki/a.md", "wiki/b.md"]);
 });
 
 test("prompt contract uses configured wiki paths", () => {
