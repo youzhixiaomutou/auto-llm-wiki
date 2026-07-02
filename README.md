@@ -137,7 +137,7 @@ Run:
 Query Auto LLM Wiki
 ```
 
-The plugin reads the index first; for larger wikis it asks the model which pages are relevant and drills into only those (index-first retrieval), then asks the model to return a saveable change plan. You can review and apply the proposed result.
+The plugin reads the index first; for larger wikis it asks the model which pages are relevant and drills into only those (index-first retrieval), then asks the model to return a saveable change plan. A worthwhile answer is filed back into the wiki as a page and the query is recorded in the log, so explorations compound over time. You can review and apply the proposed result.
 
 ### Lint the wiki
 

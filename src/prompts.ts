@@ -37,7 +37,7 @@ ${formatSources(context)}`;
 }
 
 export function buildQueryPrompt(context: WikiContext, settings: LLMWikiSettings = DEFAULT_SETTINGS): string {
-  return `You answer questions using the persistent LLM Wiki. Provide an answer as an optional wiki page if the answer should compound into the knowledge base.
+  return `You answer questions using the persistent LLM Wiki. Synthesize an answer from the index and the relevant pages, with citations. If the answer is worth keeping — a comparison, analysis, or connection — file it back as a new or updated wiki page so explorations compound in the knowledge base. Also prepend a newest-first entry to the log to record this query.
 
 ${outputLanguageInstruction()}
 
@@ -47,6 +47,9 @@ Question: ${context.question}
 
 Current index:
 ${context.index}
+
+Current log:
+${context.log}
 
 Relevant wiki pages:
 ${formatWikiPages(context.wikiPages ?? [])}`;

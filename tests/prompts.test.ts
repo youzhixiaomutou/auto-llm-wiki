@@ -34,7 +34,19 @@ test("ingest prompt uses Simplified Chinese output instruction for zh locale", (
 test("query prompt includes question and asks for saveable result", () => {
   const prompt = buildQueryPrompt({ index: "# Index", log: "", question: "What changed?", wikiPages: [] });
   expect(prompt).toContain("What changed?");
-  expect(prompt).toContain("optional wiki page");
+  expect(prompt).toContain("file it back as a new or updated wiki page");
+});
+
+test("query prompt includes the log and asks to record the query", () => {
+  const prompt = buildQueryPrompt({
+    index: "# Index",
+    log: "## [2026-01-01] ingest | Article",
+    question: "Q",
+    wikiPages: []
+  });
+  expect(prompt).toContain("Current log:");
+  expect(prompt).toContain("## [2026-01-01] ingest | Article");
+  expect(prompt).toContain("record this query");
 });
 
 test("lint prompt asks for contradictions and orphan pages", () => {
