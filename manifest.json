@@ -1,7 +1,7 @@
 {
   "id": "auto-llm-wiki",
   "name": "Auto LLM Wiki",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "minAppVersion": "1.5.0",
   "description": "Maintain a Karpathy-style LLM Wiki with AI-assisted ingest, query, lint, and previewed file changes.",
   "author": "youzhixiaomutou",
