@@ -570,7 +570,10 @@ export class ChatView extends ItemView {
 
   private autoGrow(): void {
     const el = this.inputEl;
-    el.style.setProperty("height", "auto");
+    // Clear the inline height first so scrollHeight reflects the content (enables shrinking), then
+    // set it to the clamped content height. removeProperty avoids a static string literal (which
+    // Obsidian's no-static-styles-assignment lint forbids); the px value is a dynamic expression.
+    el.style.removeProperty("height");
     // scrollHeight is unavailable in the test DOM; skip the resize there.
     const scrollHeight = (el as unknown as { scrollHeight?: number }).scrollHeight;
     if (typeof scrollHeight === "number") {

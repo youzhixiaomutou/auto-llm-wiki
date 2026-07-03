@@ -361,7 +361,7 @@ const SUPPORTED_LOCALES = new Set<string>(OBSIDIAN_LANGUAGE_CODES);
 
 function getObsidianLanguage(): string {
   // getLanguage() is only available since Obsidian 1.8.7; read the persisted UI language
-  // from localStorage instead to stay compatible with the declared minAppVersion (1.5.0).
+  // from localStorage instead to stay compatible with the declared minAppVersion (1.7.2).
   if (typeof window === "undefined") return "en";
   return window.localStorage.getItem("language") || "en";
 }

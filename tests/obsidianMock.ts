@@ -266,7 +266,7 @@ interface MockField {
   disabled: boolean;
   placeholder?: string;
   rows?: number;
-  style: { setProperty(name: string, value: string): void };
+  style: { setProperty(name: string, value: string): void; removeProperty(name: string): void };
   focus(): void;
   addEventListener(event: string, handler: (event: unknown) => void): void;
   trigger(event: string, arg: unknown): void;
@@ -299,7 +299,7 @@ function createMockField(): MockField {
   const field: MockField = {
     value: "",
     disabled: false,
-    style: { setProperty() {} },
+    style: { setProperty() {}, removeProperty() {} },
     focus() {},
     addEventListener(event, handler) { listeners[event] = handler; },
     trigger(event, arg) { listeners[event]?.(arg); },
