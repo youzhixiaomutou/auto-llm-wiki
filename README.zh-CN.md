@@ -4,6 +4,8 @@
 
 Auto LLM Wiki 是一个用于维护 Karpathy 风格 LLM Wiki 的 Obsidian 插件。它可以把原始来源笔记转化为持久、结构化、可持续积累的 Wiki，避免每次查询都从零重新推导知识。
 
+![Obsidian 中的 Auto LLM Wiki 聊天面板](assets/preview-1.png)
+
 ## 功能
 
 - 扫描已配置的原始来源文件夹，发现新增或变更的 Markdown、纯文本、CSV/TSV、代码、HTML、PDF、图片、DOC/DOCX、XLS/XLSX、PPT/PPTX 和 RTF 文件。
