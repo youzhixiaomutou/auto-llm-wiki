@@ -10,13 +10,17 @@ Auto LLM Wiki is an Obsidian plugin for maintaining a Karpathy-style LLM Wiki. I
 
 - Scan the configured raw source folder for new or changed Markdown, plain text, CSV/TSV, code, HTML, PDF, image, DOC/DOCX, XLS/XLSX, PPT/PPTX, and RTF files.
 - Extract text from text-layer PDFs, HTML pages, Office documents, spreadsheets, presentations, and RTF files; fall back to vision OCR for scanned/image-only PDF pages, image-only PPTX slides, and supported image files.
+- **Parallel OCR**: PDF pages needing OCR are processed concurrently (configurable concurrency, default 3) for a 3–5× speedup on multi-page scanned PDFs.
 - Detect changes via file mtime, size, and content hash, scanning changed files concurrently, so unchanged sources are skipped cheaply.
-- Send only new or changed raw files to an OpenAI-compatible chat completions endpoint.
+- **Multi-provider routing**: Configure separate providers for text operations (ingest, lint), chat, and vision (OCR). Supports OpenAI, Anthropic, Gemini, DeepSeek, Groq, Ollama, and any OpenAI-compatible endpoint.
+- Send only new or changed raw files to a chat completions endpoint.
 - Optionally auto-ingest changes on Obsidian file events and on a polling interval that also catches files changed outside Obsidian.
 - Retry transient endpoint errors (network, 429, 5xx) with backoff, honor `Retry-After`, and time out slow requests with a configurable limit.
-- Test the configured OpenAI-compatible endpoint from the settings page.
+- Test the configured endpoint from the settings page.
 - Generate a structured JSON change plan for wiki updates.
 - Chat with your wiki in a dedicated side panel: multi-turn conversations grounded in your notes via index-first retrieval, with Markdown-rendered replies you can copy or file back into the wiki.
+- **Streaming chat responses**: Replies stream token-by-token with a three-dot loading indicator while waiting for the model, then re-render as full Markdown on completion.
+- **Embeddings-based page selection** (optional): Use Ollama, OpenAI, or Qdrant embeddings to select relevant pages by vector similarity instead of an LLM call — faster and cheaper for large wikis.
 - Keep multiple conversations that coexist and persist across restarts — switch, rename, and delete them from a history list, and start or use another chat while one is still replying.
 - Preview proposed changes before writing anything to your vault.
 - Apply changes only after user confirmation.
@@ -75,12 +79,12 @@ PDFs and PPTX files are parsed directly when they contain readable text. PDF pag
    npm run build
    ```
 
-3. Copy these files into your Obsidian vault plugin directory:
+3. Copy the files from `build/` into your Obsidian vault plugin directory:
 
    ```text
-   <your-vault>/.obsidian/plugins/auto-llm-wiki/manifest.json
-   <your-vault>/.obsidian/plugins/auto-llm-wiki/main.js
-   <your-vault>/.obsidian/plugins/auto-llm-wiki/styles.css
+   build/main.js       → <your-vault>/.obsidian/plugins/auto-llm-wiki/main.js
+   build/styles.css    → <your-vault>/.obsidian/plugins/auto-llm-wiki/styles.css
+   build/manifest.json → <your-vault>/.obsidian/plugins/auto-llm-wiki/manifest.json
    ```
 
 4. Enable **Auto LLM Wiki** in Obsidian community plugin settings.
@@ -94,20 +98,49 @@ Open the plugin settings and configure:
 - **Assets folder**: read-only attachment folder.
 - **Index path**: wiki index file path.
 - **Log path**: wiki log file path.
-- **OpenAI API URL**: chat completions endpoint, for example:
 
-  ```text
-  https://api.openai.com/v1/chat/completions
-  ```
+### Providers
 
-- **OpenAI API key**: API key for your OpenAI-compatible provider.
-- **OpenAI model**: model name to use.
+Configure one or more LLM providers under the **Providers** section. Each provider has a type (OpenAI, Anthropic, Gemini, DeepSeek, Groq, Ollama, or OpenAI-compatible), API key, API URL, and model.
+
+Use the **Operation routing** bar to assign specific providers to each operation:
+
+| Operation | Description |
+|---|---|
+| Default provider | Fallback when no specific provider is configured for an operation |
+| Text operations | Ingest, lint, and save-to-wiki |
+| Chat operations | Chat panel conversations |
+| Vision operations | PDF OCR, image OCR |
+
+For example: use a cheap model (e.g. GPT-4.1 Mini) for text operations, a powerful model (e.g. Claude Opus) for chat, and a vision-capable model for OCR.
+
+Third-party OpenAI-compatible providers can be used as long as the URL points directly to their `/v1/chat/completions` endpoint. Use **Test connection** in settings to check whether the configured endpoint returns HTTP 2xx.
+
+### Prompt templates
+
+Customize the system prompts for ingest, chat, and lint. Leave empty to use the built-in defaults.
+
+### Embeddings (optional)
+
+Replace the LLM-based page selection step with vector similarity search. Configure under **Embeddings**:
+
+| Backend | Description |
+|---|---|
+| None (default) | Current LLM-based page selection. No changes needed. |
+| Ollama | Uses a local Ollama embedding model (e.g. `mxbai-embed-large`). Stores vectors in `wiki/.embeddings/`. |
+| OpenAI | Uses OpenAI's embeddings API (`text-embedding-3-small` or similar). Stores vectors in `wiki/.embeddings/`. |
+| Qdrant | Full vector database via Qdrant Cloud. Embeddings and search are delegated to Qdrant. |
+
+When enabled, embeddings are computed automatically on ingest and used on chat queries. Falls back to LLM-based selection if the embeddings folder is empty or the backend is unreachable.
+
+### Advanced
+
 - **Auto ingest raw file changes**: disabled by default. When enabled, supported raw file changes are analyzed automatically after a short debounce and validated model changes are applied without opening the review modal.
 - **Auto ingest debounce (seconds)**: when auto ingest is on, how long to wait after the last file change before analyzing. Defaults to 3.
 - **Auto ingest poll interval (seconds)**: when auto ingest is on, how often to scan the raw folder for changes made outside Obsidian (e.g. dragged-in files, which do not fire file events). Defaults to 15; set 0 to disable polling.
+- **OCR page concurrency**: maximum PDF pages to OCR simultaneously (default 3). Lower for rate-limited providers.
 - **Request timeout (seconds)**: how long to wait for a model response before timing out. Defaults to 900 seconds; raise it for slow local or reasoning models, lower it for fast hosted models.
-
-Third-party OpenAI-compatible providers can be used as long as the URL points directly to their `/v1/chat/completions` endpoint. Use **Test OpenAI connection** in settings to check whether the configured endpoint returns HTTP 2xx for the current URL, key, and model.
+- **Auto git commit**: when enabled, commits wiki folder changes to git after each change plan is applied.
 
 ## Usage
 
@@ -120,7 +153,7 @@ Third-party OpenAI-compatible providers can be used as long as the URL points di
    Ingest changed raw files into Auto LLM Wiki
    ```
 
-The command scans the configured raw folder and processes all new or changed supported raw files. Text/code-like files are read directly, HTML is converted to readable text, Office documents, spreadsheets, presentations, and RTF files are extracted locally, and text-layer PDFs are extracted directly. Scanned or image-only PDF pages and image-only PPTX slides use vision OCR, and supported image files are sent to the configured OpenAI-compatible model for OCR before the extracted text is ingested. Files that have already been successfully applied are skipped until their content changes.
+The command scans the configured raw folder and processes all new or changed supported raw files. Text/code-like files are read directly, HTML is converted to readable text, Office documents, spreadsheets, presentations, and RTF files are extracted locally, and text-layer PDFs are extracted directly. Scanned or image-only PDF pages and image-only PPTX slides use vision OCR (pages are OCR'd concurrently — configurable with OCR page concurrency), and supported image files are sent to the configured vision model for OCR before the extracted text is ingested. Files that have already been successfully applied are skipped until their content changes.
 
 When **Auto ingest raw file changes** is enabled, the plugin watches the configured raw folder for supported file creations and modifications. After a short debounce, it runs the same ingest pipeline and automatically applies validated changes without opening the review modal. It also polls the raw folder on the configured interval to catch files changed outside Obsidian (which do not fire file events). Auto ingest is disabled by default.
 
@@ -142,7 +175,7 @@ Open the chat panel from the ribbon (the chat icon) or run:
 Query Auto LLM Wiki
 ```
 
-This opens a chat panel docked in the right sidebar. Ask questions in natural language and the plugin answers from your wiki: it reads the index first and, for larger wikis, asks the model which pages are relevant and drills into only those (index-first retrieval). Replies are rendered as Markdown; you can **Copy** a reply or **Save to wiki** to file a worthwhile answer back as a page through the reviewed change-plan flow (the exchange is also recorded in the log), so explorations compound over time.
+This opens a chat panel docked in the right sidebar. Ask questions in natural language and the plugin answers from your wiki: it reads the index first and, for larger wikis, asks the model which pages are relevant and drills into only those (index-first retrieval). If embeddings are configured, page selection uses vector similarity search instead of an extra LLM call. Replies stream token-by-token with a three-dot loading indicator, then re-render as full Markdown. You can **Copy** a reply or **Save to wiki** to file a worthwhile answer back as a page through the reviewed change-plan flow (the exchange is also recorded in the log), so explorations compound over time.
 
 The panel keeps multiple conversations:
 

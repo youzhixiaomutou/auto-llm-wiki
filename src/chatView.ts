@@ -27,7 +27,7 @@ export interface ChatState {
 // Narrow seam between the view (UI only) and the plugin (settings/provider/vault/persistence). The
 // plugin implements this structurally so the view can be unit-tested with a fake controller.
 export interface ChatController {
-  answerChat(messages: ChatMessage[]): Promise<string>;
+  answerChat(messages: ChatMessage[], onToken?: (token: string) => void): Promise<string>;
   saveChatAnswer(question: string, answer: string): Promise<void>;
   hasApiKey(): boolean;
   setStatus(message: string): void;
@@ -457,9 +457,15 @@ export class ChatView extends ItemView {
 
     this.pending.add(sendConvId);
     this.updateComposerState();
-    this.showThinking();
+    const streamBubble = this.createStreamingBubble();
+    let streamedText = "";
     try {
-      const reply = await this.controller.answerChat([...conversation.messages]);
+      const reply = await this.controller.answerChat([...conversation.messages], (token) => {
+        streamedText += token;
+        if (!this.closed && this.activeId === sendConvId) {
+          this.updateStreamingBubbleText(streamBubble, streamedText);
+        }
+      });
       this.pending.delete(sendConvId);
       const target = this.conversations.find((c) => c.id === sendConvId);
       const assistantMessage: ChatMessage = { role: "assistant", content: reply };
@@ -471,8 +477,7 @@ export class ChatView extends ItemView {
         this.persist();
       }
       if (!this.closed && this.activeId === sendConvId && target) {
-        this.hideThinking();
-        this.renderMessage(assistantMessage, target.messages.length - 1);
+        this.finalizeStreamingBubble(streamBubble, reply, sendConvId);
       }
     } catch (error) {
       this.pending.delete(sendConvId);
@@ -487,6 +492,7 @@ export class ChatView extends ItemView {
       // Surface the failure even when the user has switched to another conversation, so a
       // background turn never fails silently.
       new Notice(message);
+      this.detachRow(streamBubble.row);
       if (!this.closed && this.activeId === sendConvId) {
         // Re-render so the rolled-back user bubble and cleared title match the persisted state,
         // then show the error inline (pending was already cleared, so no thinking indicator).
@@ -646,6 +652,88 @@ export class ChatView extends ItemView {
   private hideThinking(): void {
     this.detachRow(this.thinkingEl);
     this.thinkingEl = undefined;
+  }
+
+  private createStreamingBubble(): { row: HTMLElement; body: HTMLElement; streamEl: HTMLElement } {
+    const row = this.listEl.createDiv();
+    this.rowEls.push(row);
+    row.addClass("auto-llm-wiki-chat-message");
+    row.addClass("auto-llm-wiki-chat-message-assistant");
+
+    const avatar = row.createDiv();
+    avatar.addClass("auto-llm-wiki-chat-avatar");
+    setIcon(avatar, "sparkles");
+
+    const main = row.createDiv();
+    main.addClass("auto-llm-wiki-chat-main");
+
+    const name = main.createEl("div", { text: t("chat.assistant") });
+    name.addClass("auto-llm-wiki-chat-name");
+
+    const body = main.createDiv();
+    body.addClass("auto-llm-wiki-chat-body");
+
+    const streamEl = body.createDiv();
+    const thinking = streamEl.createDiv();
+    thinking.addClass("auto-llm-wiki-chat-thinking");
+    thinking.setAttr("aria-label", t("chat.thinking"));
+    for (let i = 0; i < 3; i++) {
+      thinking.createSpan().addClass("auto-llm-wiki-chat-dot");
+    }
+
+    this.scrollToBottom();
+    return { row, body, streamEl };
+  }
+
+  private updateStreamingBubbleText(bubble: { streamEl: HTMLElement }, text: string): void {
+    bubble.streamEl.setText(text);
+    this.scrollToBottomIfAtBottom();
+  }
+
+  private finalizeStreamingBubble(bubble: { row: HTMLElement; body: HTMLElement; streamEl: HTMLElement }, fullText: string, convId: string): void {
+    bubble.streamEl.remove();
+    const body = bubble.body;
+    void MarkdownRenderer.render(this.app, fullText, body, "", this)
+      .then(() => { if (!this.closed) this.scrollToBottom(); })
+      .catch(() => { if (!this.closed) body.setText(fullText); });
+
+    const main = body.parentElement!;
+    const actions = main.createDiv();
+    actions.addClass("auto-llm-wiki-chat-actions");
+
+    const copyButton = actions.createEl("button");
+    copyButton.addClass("auto-llm-wiki-chat-actionbtn");
+    copyButton.addClass("auto-llm-wiki-chat-copy");
+    setIcon(copyButton, "copy");
+    copyButton.setAttr("aria-label", t("chat.copy"));
+    copyButton.setAttr("title", t("chat.copy"));
+    copyButton.onclick = () => this.handleCopy(fullText, copyButton);
+
+    const saveButton = actions.createEl("button");
+    saveButton.addClass("auto-llm-wiki-chat-actionbtn");
+    saveButton.addClass("auto-llm-wiki-chat-save");
+    setIcon(saveButton, "save");
+    saveButton.setAttr("aria-label", t("chat.saveToWiki"));
+    saveButton.setAttr("title", t("chat.saveToWiki"));
+    const question = this.activeUserMessageForConv(convId);
+    saveButton.onclick = () => this.handleSave(question, fullText, saveButton);
+  }
+
+  private activeUserMessageForConv(convId: string): string {
+    const conversation = this.conversations.find((c) => c.id === convId);
+    if (!conversation) return "";
+    const messages = conversation.messages;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role === "user") return messages[index].content;
+    }
+    return "";
+  }
+
+  private scrollToBottomIfAtBottom(): void {
+    const el = this.listEl;
+    if (el.scrollTop + el.clientHeight + 50 >= el.scrollHeight) {
+      el.scrollTop = el.scrollHeight;
+    }
   }
 
   private renderError(message: string): void {
