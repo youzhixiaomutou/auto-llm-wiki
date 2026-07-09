@@ -1,14 +1,24 @@
 import { EventRef, Notice, Plugin, TAbstractFile, TFile } from "obsidian";
 import { normalizePath, parseChangePlan, planHasDestructiveOperation, validateChangePlan } from "./changePlan";
 import { t } from "./i18n";
-import { buildChatContextMessage, buildChatSystemPrompt, buildIngestPrompt, buildLintPrompt, buildQueryPrompt, buildQuerySelectionPrompt, parseSelectedQueryPages } from "./prompts";
-import { OpenAIProvider, OpenAIProviderError } from "./providers/OpenAIProvider";
+import { templateEngine } from "./templateEngine";
+import { OpenAIProviderError } from "./providers/OpenAIProvider";
+import { ProviderError } from "./providers/BaseOpenAICompatibleProvider";
+import { providerRegistry } from "./providers/ProviderRegistry";
+import { registerBuiltinProviders } from "./providers/registerProviders";
 import { ChangePlanPreviewModal } from "./previewModal";
 import { ChatController, ChatMessage, ChatState, Conversation, ChatView, CHAT_VIEW_TYPE } from "./chatView";
-import { findChangedRawFiles, findRawFileCandidates, ImageOcrRequest, migrateRawFileState, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
-import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "./settings";
-import { LLMWikiPluginData, LLMWikiSettings } from "./types";
+import { findChangedRawFiles, findRawFileCandidates, hashContent, ImageOcrRequest, migrateRawFileState, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
+import { DEFAULT_SETTINGS, getProviderConfigForOperation, LLMWikiSettingTab } from "./settings";
+import type { OperationType } from "./settings";
+import { LLMWikiPluginData, LLMWikiSettings, ProviderConfig } from "./types";
 import { applyChangePlan, listMarkdownFilePaths, listMarkdownFiles, readTextFile, readWikiPages } from "./vaultOps";
+import { extractJsonArray } from "./jsonExtract";
+import { EmbeddingsProvider } from "./embeddings/EmbeddingsProvider";
+import { OllamaEmbeddingsProvider, cosineSearch } from "./embeddings/OllamaEmbeddingsProvider";
+import { OpenAIEmbeddingsProvider } from "./embeddings/OpenAIEmbeddingsProvider";
+import { QdrantEmbeddingsProvider } from "./embeddings/QdrantEmbeddingsProvider";
+import { EmbeddingsStore } from "./embeddings/EmbeddingsStore";
 
 const QUERY_MAX_PAGES = 12;
 // Cap the conversation turns sent to the model so history + per-turn wiki context stays within
@@ -30,6 +40,7 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   private autoIngestPollTimer?: number;
 
   async onload(): Promise<void> {
+    registerBuiltinProviders();
     await this.loadSettings();
     this.statusBarItem = this.addStatusBarItem();
     this.setStatus(t("status.idle"));
@@ -60,12 +71,12 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
 
   async loadSettings(): Promise<void> {
     const data = await this.loadData() as (LLMWikiPluginData & Partial<LLMWikiSettings> & { chatState?: ChatState }) | undefined;
-    // Keep persisted-but-non-setting data (rawFileState, chatState) and the removed `provider` key
-    // out of the settings object so they aren't re-saved as if they were live settings.
     const { rawFileState, chatState, ...rest } = data ?? {};
     const settingsData: Record<string, unknown> = { ...rest };
     delete settingsData.provider;
     this.settings = { ...DEFAULT_SETTINGS, ...settingsData };
+    // Migrate old single-provider fields to providers[] array.
+    this.settings = migrateProviderSettings(this.settings);
     this.rawFileState = migrateRawFileState(rawFileState);
     this.chatState = normalizeChatState(chatState);
   }
@@ -78,8 +89,64 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     this.statusBarItem?.setText(message);
   }
 
-  private createProvider(): OpenAIProvider {
-    return new OpenAIProvider(undefined, { timeoutMs: this.settings.requestTimeoutMs });
+  private getProviderConfig(operation: OperationType = "text"): ProviderConfig | undefined {
+    return getProviderConfigForOperation(this.settings, operation);
+  }
+
+  private createProvider(operation: OperationType = "text"): import("./providers/LLMProvider").LLMProvider {
+    const config = this.getProviderConfig(operation);
+    if (!config) throw new Error(t("notice.missingOpenAIKey"));
+    return providerRegistry.getProvider(config, this.settings.requestTimeoutMs);
+  }
+
+  private getEmbeddingsProvider(): EmbeddingsProvider | undefined {
+    const backend = this.settings.embeddingsBackend;
+    if (backend === "none") return undefined;
+    if (backend === "ollama") {
+      return new OllamaEmbeddingsProvider(this.settings.embeddingsApiUrl, this.settings.embeddingsModel);
+    }
+    if (backend === "openai") {
+      return new OpenAIEmbeddingsProvider(
+        this.settings.embeddingsApiKey,
+        this.settings.embeddingsApiUrl,
+        this.settings.embeddingsModel
+      );
+    }
+    if (backend === "qdrant") {
+      return new QdrantEmbeddingsProvider(
+        this.settings.qdrantUrl,
+        this.settings.qdrantApiKey,
+        this.settings.qdrantCollection,
+        this.settings.embeddingsModel
+      );
+    }
+    return undefined;
+  }
+
+  private async updateEmbeddings(plan: import("./types").ChangePlan): Promise<void> {
+    if (this.settings.embeddingsBackend === "none") return;
+    const provider = this.getEmbeddingsProvider();
+    if (!provider) return;
+    const store = new EmbeddingsStore(this.app, this.settings);
+    this.setStatus(t("status.computingEmbeddings"));
+
+    for (const op of plan.operations) {
+      if (op.kind === "delete") {
+        await store.deleteByPath(op.path);
+      } else if (op.kind === "create" || op.kind === "update") {
+        try {
+          const content = await readTextFile(this.app, op.path);
+          const h = hashContent(content);
+          const existing = await store.loadAll();
+          const existingEntry = existing.find((e) => e.path === op.path);
+          if (existingEntry?.hash === h) continue;
+          const embedding = await provider.embed(content);
+          await store.save(op.path, h, embedding);
+        } catch {
+          // Silently skip embedding failures so they don't block the ingest flow
+        }
+      }
+    }
   }
 
   enableAutoIngestListeners(): void {
@@ -137,7 +204,8 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   private async ingestActiveSource(autoApply = false, quiet = false): Promise<void> {
-    if (!this.settings.openAIApiKey) {
+    const providerConfig = this.getProviderConfig("text");
+    if (!providerConfig?.apiKey) {
       if (!quiet) new Notice(t("notice.missingOpenAIKey"));
       return;
     }
@@ -156,22 +224,17 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
         if (!quiet) new Notice(message);
       }, (request) => this.ocrPdfPage(request), (request) => this.ocrImage(request));
       if (scan.failed.length > 0) {
-        // Each message already names its file exactly once (see findChangedRawFiles).
         const details = scan.failed.map((failure) => failure.message).join("; ");
         const failedMessage = t("notice.rawScanFailed", { details });
         this.setStatus(failedMessage);
         if (!quiet) new Notice(failedMessage);
       }
-      // Persist refreshed mtime/size for confirmed-unchanged files immediately (cache
-      // maintenance, independent of ingest) so the fast-path engages on later scans.
       if (Object.keys(scan.stamps).length > 0) {
         this.rawFileState = { ...this.rawFileState, ...scan.stamps };
         await this.saveSettings();
       }
       const changedRawFiles = scan.changed;
       if (changedRawFiles.length === 0) {
-        // Keep the failure surfaced as the final status when nothing else changed; only
-        // announce "no changes" when the scan was actually clean.
         if (scan.failed.length === 0) {
           this.setStatus(t("status.noRawChanges"));
           if (!quiet) new Notice(t("notice.noRawChanges"));
@@ -182,11 +245,15 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const readingMessage = t("status.readingVaultContext");
       this.setStatus(readingMessage);
       if (!quiet) new Notice(readingMessage);
-      const prompt = buildIngestPrompt({
+      const sourceTexts = changedRawFiles.map((file) =>
+        `---
+Source path: ${file.path}
+${file.content}`).join("\n");
+      const prompt = templateEngine.buildIngestPrompt(this.settings, {
         index: await readTextFile(this.app, this.settings.indexPath),
         log: await readTextFile(this.app, this.settings.logPath),
-        sources: changedRawFiles.map((file) => ({ path: file.path, content: file.content }))
-      }, this.settings);
+        sources: sourceTexts
+      });
       await this.runPrompt(prompt, async () => {
         this.rawFileState = updateRawFileState(this.rawFileState, changedRawFiles);
         await this.saveSettings();
@@ -207,17 +274,21 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   private async ocrPdfPage(request: PdfOcrRequest): Promise<string> {
+    const providerConfig = this.getProviderConfig("vision");
+    if (!providerConfig || !providerConfig.apiKey) {
+      throw new Error(t("error.noVisionProvider"));
+    }
     const message = t("status.ocrPdfPage", { pageNumber: request.pageNumber, path: request.path });
     this.setStatus(message);
     new Notice(message);
     const imageDataUrl = await renderPdfPageToPngDataUrl(request.page);
-    const provider = this.createProvider();
+    const provider = this.createProvider("vision");
     try {
       return await provider.completeVision({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
-        prompt: t("prompt.ocrPdfPage", { pageNumber: request.pageNumber, path: request.path }),
+        apiKey: providerConfig.apiKey,
+        apiUrl: providerConfig.apiUrl,
+        model: providerConfig.model,
+        prompt: templateEngine.getOcrPdfPrompt(this.settings, request.pageNumber, request.path),
         imageDataUrl
       });
     } catch (error) {
@@ -226,16 +297,20 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   private async ocrImage(request: ImageOcrRequest): Promise<string> {
+    const providerConfig = this.getProviderConfig("vision");
+    if (!providerConfig || !providerConfig.apiKey) {
+      throw new Error(t("error.noVisionProvider"));
+    }
     const message = t("status.ocrImage", { path: request.path });
     this.setStatus(message);
     new Notice(message);
-    const provider = this.createProvider();
+    const provider = this.createProvider("vision");
     try {
       return await provider.completeVision({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
-        prompt: t("prompt.ocrImage", { path: request.path }),
+        apiKey: providerConfig.apiKey,
+        apiUrl: providerConfig.apiUrl,
+        model: providerConfig.model,
+        prompt: templateEngine.getOcrImagePrompt(this.settings, request.path),
         imageDataUrl: request.imageDataUrl
       });
     } catch (error) {
@@ -256,7 +331,8 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   hasApiKey(): boolean {
-    return Boolean(this.settings.openAIApiKey);
+    const config = this.getProviderConfig("text");
+    return Boolean(config?.apiKey);
   }
 
   // ChatController: the conversation store lives in plugin data so it survives the leaf closing and
@@ -280,11 +356,10 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   // vault (no writes); errors are localized so the view can display error.message directly. The
   // whole body (retrieval + selection + the chat call) is inside the try so any failure is
   // localized and the status bar is always reset.
-  async answerChat(messages: ChatMessage[]): Promise<string> {
+  async answerChat(messages: ChatMessage[], onToken?: (token: string) => void): Promise<string> {
+    const providerConfig = this.getProviderConfig("chat");
     this.answerChatInFlight++;
     try {
-      // Retrieve against the recent conversation, not just the last message, so a follow-up like
-      // "expand on that" still pulls the pages the thread is actually about.
       const query = buildRetrievalQuery(messages);
       this.setStatus(t("status.readingVaultContext"));
       const index = await readTextFile(this.app, this.settings.indexPath);
@@ -292,31 +367,33 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const selectedPaths = await this.selectRelevantPages(index, query, pagePaths);
       const wikiPages = await readWikiPages(this.app, selectedPaths);
       this.setStatus(t("status.waitingModel"));
-      const provider = this.createProvider();
-      // Wiki context rides in the system message so the conversation array stays a clean sequence
-      // of alternating user/assistant turns (no synthetic user turn before the real question).
-      const systemContent = `${buildChatSystemPrompt(this.settings)}\n\n${buildChatContextMessage({ index, wikiPages }, this.settings)}`;
+      const provider = this.createProvider("chat");
+      const wikiPagesText = wikiPages.map((p) => `---
+Path: ${p.path}
+${p.content}`).join("\n\n");
+      const systemContent = `${templateEngine.buildChatSystemPrompt(this.settings)}\n\n${templateEngine.buildChatContextMessage(this.settings, { index, wikiPages: wikiPagesText })}`;
       return await provider.chat({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
+        apiKey: providerConfig?.apiKey ?? "",
+        apiUrl: providerConfig?.apiUrl ?? "",
+        model: providerConfig?.model ?? "",
         messages: [
           { role: "system", content: systemContent },
           ...messages.slice(-CHAT_HISTORY_MAX_MESSAGES)
-        ]
+        ],
+        onToken
       });
     } catch (error) {
       throw new Error(formatOpenAIErrorMessage(error, t("error.requestFailed")));
     } finally {
       this.answerChatInFlight--;
-      // Only clear the status bar when no other chat turn is still running.
       if (this.answerChatInFlight === 0) this.setStatus(t("status.idle"));
     }
   }
 
   // ChatController: file a finished Q&A back through the reviewed change-plan pipeline.
   async saveChatAnswer(question: string, answer: string): Promise<void> {
-    if (!this.settings.openAIApiKey) {
+    const providerConfig = this.getProviderConfig("text");
+    if (!providerConfig?.apiKey) {
       new Notice(t("notice.missingOpenAIKey"));
       return;
     }
@@ -326,13 +403,16 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const pagePaths = this.listWikiContentPages();
       const selectedPaths = await this.selectRelevantPages(index, question, pagePaths);
       const wikiPages = await readWikiPages(this.app, selectedPaths);
-      const prompt = buildQueryPrompt({
+      const wikiPagesText = wikiPages.map((p) => `---
+Path: ${p.path}
+${p.content}`).join("\n\n");
+      const prompt = templateEngine.buildQueryPrompt(this.settings, {
         index,
         log: await readTextFile(this.app, this.settings.logPath),
         question,
         answer,
-        wikiPages
-      }, this.settings);
+        wikiPages: wikiPagesText
+      });
       await this.runPrompt(prompt);
     } catch (error) {
       const message = formatOpenAIErrorMessage(error, t("error.requestFailed"));
@@ -352,17 +432,51 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
 
   // Karpathy-style query: read the index first and let the model pick the relevant pages,
   // then drill into only those. Skip the extra call when the wiki is small enough to send whole.
+  // When embeddings are configured, use vector similarity instead of an LLM call.
   private async selectRelevantPages(index: string, question: string, pagePaths: string[]): Promise<string[]> {
     if (pagePaths.length <= QUERY_MAX_PAGES) return pagePaths;
+
+    if (this.settings.embeddingsBackend !== "none") {
+      try {
+        const provider = this.getEmbeddingsProvider();
+        if (!provider) return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+        const store = new EmbeddingsStore(this.app, this.settings);
+        const storedEmbeddings = await store.loadAll();
+
+        if (storedEmbeddings.length === 0) return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+
+        const queryEmbedding = await provider.embed(question);
+
+        if (provider instanceof QdrantEmbeddingsProvider) {
+          const results = await provider.searchRemote(queryEmbedding, QUERY_MAX_PAGES);
+          const paths = results.filter((r) => pagePaths.includes(r.path)).map((r) => r.path);
+          return paths.length > 0 ? paths : this.selectRelevantPagesViaLLM(index, question, pagePaths);
+        }
+
+        const available = storedEmbeddings.filter((e) => pagePaths.includes(e.path));
+        if (available.length === 0) return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+
+        const results = cosineSearch(queryEmbedding, available, QUERY_MAX_PAGES);
+        return results.map((r) => r.path);
+      } catch {
+        return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+      }
+    }
+
+    return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+  }
+
+  private async selectRelevantPagesViaLLM(index: string, question: string, pagePaths: string[]): Promise<string[]> {
+    const providerConfig = this.getProviderConfig("chat");
     const selectingMessage = t("status.selectingPages");
     this.setStatus(selectingMessage);
     new Notice(selectingMessage);
-    const provider = this.createProvider();
+    const provider = this.createProvider("chat");
     const response = await provider.complete({
-      apiKey: this.settings.openAIApiKey,
-      apiUrl: this.settings.openAIApiUrl,
-      model: this.settings.openAIModel,
-      prompt: buildQuerySelectionPrompt({ index, question, pagePaths }, this.settings)
+      apiKey: providerConfig?.apiKey ?? "",
+      apiUrl: providerConfig?.apiUrl ?? "",
+      model: providerConfig?.model ?? "",
+      prompt: templateEngine.buildQuerySelectionPrompt(this.settings, { index, question, pagePaths: pagePaths.join("\n") })
     });
     return parseSelectedQueryPages(response, pagePaths, QUERY_MAX_PAGES);
   }
@@ -374,17 +488,21 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     const wikiPages = await listMarkdownFiles(this.app, this.settings.wikiFolder);
     const rawPaths = findRawFileCandidates(this.app.vault.getFiles(), this.settings)
       .sourceFiles.map((file) => file.path).sort();
-    const prompt = buildLintPrompt({
+    const wikiPagesText = wikiPages.map((p) => `---
+Path: ${p.path}
+${p.content}`).join("\n\n");
+    const prompt = templateEngine.buildLintPrompt(this.settings, {
       index: await readTextFile(this.app, this.settings.indexPath),
       log: await readTextFile(this.app, this.settings.logPath),
-      wikiPages,
-      rawPaths
-    }, this.settings);
+      wikiPages: wikiPagesText,
+      rawPaths: rawPaths.join("\n")
+    });
     await this.runPrompt(prompt);
   }
 
   private async runPrompt(prompt: string, onApplySuccess?: () => Promise<void>, autoApply = false): Promise<void> {
-    if (!this.settings.openAIApiKey) {
+    const providerConfig = this.getProviderConfig("text");
+    if (!providerConfig?.apiKey) {
       new Notice(t("notice.missingOpenAIKey"));
       return;
     }
@@ -392,37 +510,65 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const waitingMessage = t("status.waitingModel");
       this.setStatus(waitingMessage);
       new Notice(waitingMessage);
-      const provider = this.createProvider();
+      const provider = this.createProvider("text");
       const response = await provider.complete({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
+        apiKey: providerConfig.apiKey,
+        apiUrl: providerConfig.apiUrl,
+        model: providerConfig.model,
         prompt
       });
       const validatingMessage = t("status.validatingChanges");
       this.setStatus(validatingMessage);
       new Notice(validatingMessage);
       const plan = validateChangePlan(parseChangePlan(response), this.settings);
-      // Destructive plans always go through review even when auto-ingest would otherwise apply
-      // automatically (single source of truth: planHasDestructiveOperation).
       if (autoApply && !planHasDestructiveOperation(plan)) {
         const applyingMessage = t("status.applyingChanges");
         this.setStatus(applyingMessage);
         new Notice(applyingMessage);
         await applyChangePlan(this.app, plan);
         await onApplySuccess?.();
+        await this.updateEmbeddings(plan);
+        await this.tryGitCommit(plan);
         this.setStatus(t("status.applied"));
         new Notice(t("notice.changesApplied"));
         return;
       }
       this.setStatus(t("status.reviewChanges"));
       new Notice(t("notice.reviewChanges"));
-      new ChangePlanPreviewModal(this.app, plan, (message) => this.setStatus(message), onApplySuccess).open();
+      new ChangePlanPreviewModal(this.app, plan, (message) => this.setStatus(message), async () => {
+        await onApplySuccess?.();
+        await this.updateEmbeddings(plan);
+        await this.tryGitCommit(plan);
+      }).open();
     } catch (error) {
       const message = formatOpenAIErrorMessage(error, t("error.requestFailed"));
       this.setStatus(t("status.error", { message }));
       new Notice(message);
     }
+  }
+
+  private async tryGitCommit(plan: import("./types").ChangePlan): Promise<void> {
+    if (!this.settings.gitAutoCommit) return;
+    try {
+      const message = templateEngine.buildGitCommitMessage(this.settings, {
+        summary: plan.summary,
+        operationCount: plan.operations.length
+      });
+      await this.gitCommit(message);
+    } catch {
+      // Git commit failures don't block the flow.
+    }
+  }
+
+  private async gitCommit(message: string): Promise<void> {
+    if (typeof (window as unknown as { require?: (module: string) => unknown }).require === "undefined") return;
+    const childProcess = (window as unknown as { require: (module: string) => { exec: (cmd: string, options: unknown, callback: (err: unknown, stdout: string, stderr: string) => void) => unknown } }).require("child_process");
+    const vaultPath = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.() ?? "";
+    if (!vaultPath) return;
+    const wikiFolder = this.settings.wikiFolder;
+    await new Promise<void>((resolve) => {
+      childProcess.exec(`git add "${wikiFolder}" && git commit -m "${message.replace(/"/g, '\\"')}"`, { cwd: vaultPath }, () => resolve());
+    });
   }
 }
 
@@ -488,7 +634,7 @@ function sanitizeConversation(conversation: Conversation): Conversation {
 }
 
 export function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string): string {
-  if (error instanceof OpenAIProviderError) {
+  if (error instanceof OpenAIProviderError || error instanceof ProviderError) {
     if (error.kind === "request") {
       return t("error.openAIRequestFailed", { message: error.message });
     }
@@ -507,4 +653,29 @@ export function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string
   }
 
   return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function parseSelectedQueryPages(response: string, availablePaths: string[], limit: number): string[] {
+  const available = new Set(availablePaths);
+  const parsed = extractJsonArray(response);
+  const selected = Array.isArray(parsed)
+    ? parsed.filter((value): value is string => typeof value === "string" && available.has(value))
+    : [];
+  const deduped = Array.from(new Set(selected));
+  return deduped.length > 0 ? deduped.slice(0, limit) : availablePaths.slice(0, limit);
+}
+
+function migrateProviderSettings(settings: LLMWikiSettings): LLMWikiSettings {
+  if (settings.providers && settings.providers.length > 0) return settings;
+  // Migrate old single-provider fields to providers[] array.
+  const providers: ProviderConfig[] = [{
+    id: "default-openai",
+    type: "openai",
+    name: "OpenAI",
+    apiKey: settings.openAIApiKey,
+    apiUrl: settings.openAIApiUrl,
+    model: settings.openAIModel,
+    enabled: true
+  }];
+  return { ...settings, providers, activeProviderId: "default-openai" };
 }

@@ -381,7 +381,11 @@ test("OCR provider failures are localized at the ingest UI boundary", async () =
   const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } };
   const pdfFile = new TFileMock("raw/scanned.pdf");
   const plugin = new PluginMock();
-  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "bad" });
+  jest.spyOn(plugin, "loadData").mockResolvedValue({
+    providers: [{ id: "default-openai", type: "openai", name: "OpenAI", apiKey: "bad", apiUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4.1-mini", enabled: true }],
+    activeProviderId: "default-openai",
+    visionProviderId: "default-openai"
+  });
   plugin.app = {
     vault: {
       getFiles: () => [pdfFile],

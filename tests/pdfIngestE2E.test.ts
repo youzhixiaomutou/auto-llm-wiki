@@ -135,7 +135,12 @@ test("uses vision OCR fallback for scanned PDFs before ingesting", async () => {
   ]);
   const savedData: unknown[] = [];
   const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } })();
-  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "key", rawFileState: {} });
+  jest.spyOn(plugin, "loadData").mockResolvedValue({
+    providers: [{ id: "default-openai", type: "openai", name: "OpenAI", apiKey: "key", apiUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4.1-mini", enabled: true }],
+    activeProviderId: "default-openai",
+    visionProviderId: "default-openai",
+    rawFileState: {}
+  });
   jest.spyOn(plugin, "saveData").mockImplementation(async (data) => {
     savedData.push(data);
   });

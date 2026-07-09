@@ -81,7 +81,21 @@ export class PluginSettingTab {
 }
 
 export class Setting {
-  constructor(public containerEl: unknown) {}
+  constructor(public containerEl: unknown) {
+    this.ensureArrays(containerEl);
+  }
+
+  private ensureArrays(el: unknown): void {
+    if (!el || typeof el !== "object") return;
+    const obj = el as Record<string, unknown>;
+    if (!Array.isArray(obj.texts)) obj.texts = [];
+    if (!Array.isArray(obj.buttons)) obj.buttons = [];
+    if (!Array.isArray(obj.toggles)) obj.toggles = [];
+    if (!Array.isArray(obj.textInputs)) obj.textInputs = [];
+    if (!Array.isArray(obj.dropdowns)) obj.dropdowns = [];
+    if (!Array.isArray(obj.textareas)) obj.textareas = [];
+    if (!Array.isArray(obj.fields)) obj.fields = [];
+  }
 
   setName(name?: string): this {
     if (name) (this.containerEl as { texts?: string[] }).texts?.push(name);
@@ -141,8 +155,8 @@ export class Setting {
     return this;
   }
 
-  addButton(callback: (button: { buttonEl: { disabled?: boolean }; setButtonText(text: string): void; setDisabled(disabled: boolean): void; onClick(callback: () => Promise<void>): void }) => void): this {
-    const button: { buttonText?: string; buttonEl: { disabled?: boolean }; disabled?: boolean; onclick?: () => Promise<void>; setButtonText(text: string): void; setDisabled(disabled: boolean): void; onClick(callback: () => Promise<void>): void } = {
+  addButton(callback: (button: { buttonEl: { disabled?: boolean }; setButtonText(text: string): void; setDisabled(disabled: boolean): void; setCta(): void; setWarning(): void; onClick(callback: () => Promise<void>): void }) => void): this {
+    const button: { buttonText?: string; buttonEl: { disabled?: boolean }; disabled?: boolean; onclick?: () => Promise<void>; setButtonText(text: string): void; setDisabled(disabled: boolean): void; setCta(): void; setWarning(): void; onClick(callback: () => Promise<void>): void } = {
       buttonEl: {},
       setButtonText(text: string) {
         button.buttonText = text;
@@ -151,12 +165,50 @@ export class Setting {
         button.disabled = disabled;
         button.buttonEl.disabled = disabled;
       },
+      setCta() {},
+      setWarning() {},
       onClick(callback: () => Promise<void>) {
         button.onclick = callback;
       }
     };
     (this.containerEl as { buttons?: unknown[] }).buttons?.push(button);
     callback(button);
+    return this;
+  }
+
+  addDropdown(cb: (dropdown: { addOption(v: string, l: string): void; setValue(v: string): void; onChange(c: (v: string) => Promise<void>): void }) => void): this {
+    const dropdown: { value?: string; options: Record<string, string>; onchange?: (v: string) => Promise<void>; addOption(v: string, l: string): void; setValue(v: string): void; onChange(c: (v: string) => Promise<void>): void } = {
+      options: {},
+      addOption(v: string, l: string) {
+        dropdown.options[v] = l;
+      },
+      setValue(v: string) {
+        dropdown.value = v;
+      },
+      onChange(c: (v: string) => Promise<void>) {
+        dropdown.onchange = c;
+      }
+    };
+    (this.containerEl as { dropdowns?: unknown[] }).dropdowns?.push(dropdown);
+    cb(dropdown);
+    return this;
+  }
+
+  addTextArea(cb: (textarea: { inputEl: { type: string }; setValue(v: string): void; setPlaceholder(t: string): void; onChange(c: (v: string) => Promise<void>): void }) => void): this {
+    const textarea: { value?: string; placeholder?: string; onchange?: (v: string) => Promise<void>; inputEl: { type: string }; setValue(v: string): void; setPlaceholder(t: string): void; onChange(c: (v: string) => Promise<void>): void } = {
+      inputEl: { type: "textarea" },
+      setValue(value: string) {
+        textarea.value = value;
+      },
+      setPlaceholder(text: string) {
+        textarea.placeholder = text;
+      },
+      onChange(c: (value: string) => Promise<void>) {
+        textarea.onchange = c;
+      }
+    };
+    (this.containerEl as { textareas?: unknown[] }).textareas?.push(textarea);
+    cb(textarea);
     return this;
   }
 }
@@ -310,10 +362,13 @@ function createMockField(): MockField {
 }
 
 function createMockElement() {
+  const listeners: Record<string, (event: unknown) => void> = {};
   const element: {
     buttons: MockButton[];
     toggles: Array<{ onchange?: (value: boolean) => Promise<void>; value?: boolean }>;
     textInputs: Array<{ value?: string; onchange?: (value: string) => Promise<void> }>;
+    dropdowns: Array<{ value?: string; options: Record<string, string>; onchange?: (value: string) => Promise<void> }>;
+    textareas: Array<{ value?: string; placeholder?: string; onchange?: (value: string) => Promise<void> }>;
     fields: MockField[];
     texts: string[];
     classes: string[];
@@ -328,11 +383,14 @@ function createMockElement() {
     addClass(className?: string): void;
     removeClass(className?: string): void;
     setAttr(name?: string, value?: string): void;
+    addEventListener(event: string, handler: (event: unknown) => void): void;
     appendChild(): void;
   } = {
     buttons: [],
     toggles: [],
     textInputs: [],
+    dropdowns: [],
+    textareas: [],
     fields: [],
     texts: [],
     classes: [],
@@ -347,6 +405,8 @@ function createMockElement() {
       element.buttons.length = 0;
       element.toggles.length = 0;
       element.textInputs.length = 0;
+      element.dropdowns.length = 0;
+      element.textareas.length = 0;
       element.fields.length = 0;
       element.classes.length = 0;
       element.styles = {};
@@ -435,6 +495,7 @@ function createMockElement() {
       if (index >= 0) element.classes.splice(index, 1);
     },
     setAttr() {},
+    addEventListener(event: string, handler: (event: unknown) => void) { listeners[event] = handler; },
     appendChild() {}
   };
   return element;
