@@ -1,4 +1,4 @@
-import * as obsidian from "obsidian";
+﻿import * as obsidian from "obsidian";
 import LLMWikiPlugin from "../src/main";
 import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "../src/settings";
 
@@ -19,7 +19,7 @@ test("onload initializes persistent status bar as idle", async () => {
 
   await plugin.onload();
 
-  expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki: idle");
+  expect(plugin.statusBarItems[0].text).toBe("ContextOS: idle");
 });
 
 test("does not register raw auto-ingest listeners by default", async () => {
@@ -166,7 +166,7 @@ test("auto ingest applies validated changes without opening the review modal", a
     expect(modals).toHaveLength(0);
     expect(existing.has("wiki/source.md")).toBe(true);
     expect(JSON.stringify(savedData[savedData.length - 1])).toContain("raw/source.md");
-    expect(plugin.statusBarItems[0].history).toContain("Auto LLM Wiki: applied");
+    expect(plugin.statusBarItems[0].history).toContain("ContextOS: applied");
   } finally {
     jest.useRealTimers();
   }
@@ -188,7 +188,7 @@ test("ingest command does not parse or OCR raw files without an API key", async 
   await plugin.onload();
   await (plugin as unknown as { ingestActiveSource(): Promise<void> }).ingestActiveSource();
 
-  expect(notices).toContain("Set your OpenAI API key in Auto LLM Wiki settings.");
+  expect(notices).toContain("Set your OpenAI API key in ContextOS settings.");
   expect(requestSpy).not.toHaveBeenCalled();
   expect(loadPdfSpy).not.toHaveBeenCalled();
   expect((plugin.app as unknown as { vault: { readBinary: jest.Mock } }).vault.readBinary).not.toHaveBeenCalled();
@@ -228,20 +228,20 @@ test("ingest command updates persistent status bar for each long-running stage",
   await (plugin as unknown as { ingestActiveSource(): Promise<void> }).ingestActiveSource();
 
   expect(plugin.statusBarItems[0].history).toEqual([
-    "Auto LLM Wiki: scanning raw folder for changes...",
-    "Auto LLM Wiki: found 1 raw source candidate, no PDF candidates",
-    "Auto LLM Wiki: reading vault context...",
-    "Auto LLM Wiki: waiting for model response...",
-    "Auto LLM Wiki: validating proposed changes...",
-    "Auto LLM Wiki: review proposed changes"
+    "ContextOS: scanning raw folder for changes...",
+    "ContextOS: found 1 raw source candidate, no PDF candidates",
+    "ContextOS: reading vault context...",
+    "ContextOS: waiting for model response...",
+    "ContextOS: validating proposed changes...",
+    "ContextOS: review proposed changes"
   ]);
   expect(notices).toEqual([
-    "Auto LLM Wiki: scanning raw folder for changes...",
-    "Auto LLM Wiki: found 1 raw source candidate, no PDF candidates",
-    "Auto LLM Wiki: reading vault context...",
-    "Auto LLM Wiki: waiting for model response...",
-    "Auto LLM Wiki: validating proposed changes...",
-    "Auto LLM Wiki: review proposed changes."
+    "ContextOS: scanning raw folder for changes...",
+    "ContextOS: found 1 raw source candidate, no PDF candidates",
+    "ContextOS: reading vault context...",
+    "ContextOS: waiting for model response...",
+    "ContextOS: validating proposed changes...",
+    "ContextOS: review proposed changes."
   ]);
 });
 
@@ -381,7 +381,11 @@ test("OCR provider failures are localized at the ingest UI boundary", async () =
   const PluginMock = LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } };
   const pdfFile = new TFileMock("raw/scanned.pdf");
   const plugin = new PluginMock();
-  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "bad" });
+  jest.spyOn(plugin, "loadData").mockResolvedValue({
+    providers: [{ id: "default-openai", type: "openai", name: "OpenAI", apiKey: "bad", apiUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4.1-mini", enabled: true }],
+    activeProviderId: "default-openai",
+    visionProviderId: "default-openai"
+  });
   plugin.app = {
     vault: {
       getFiles: () => [pdfFile],
@@ -394,7 +398,7 @@ test("OCR provider failures are localized at the ingest UI boundary", async () =
 
   // Per-file isolation: the OCR failure is captured for raw/scanned.pdf and surfaced via the
   // "skipped unreadable" notice (carrying the underlying error) instead of aborting the scan.
-  const expectedNotice = "Auto LLM Wiki：已跳过无法读取的原始文件——解析原始文件失败：raw/scanned.pdf：OpenAI 请求失败：401 bad key";
+  const expectedNotice = "ContextOS：已跳过无法读取的原始文件——解析原始文件失败：raw/scanned.pdf：OpenAI 请求失败：401 bad key";
   expect(plugin.statusBarItems[0].text).toBe(expectedNotice);
   expect(notices).toContain(expectedNotice);
   // The path must appear exactly once (no double-qualification from re-prepending the path).
@@ -411,7 +415,7 @@ test("runPrompt localizes OpenAI request failures at the UI boundary", async () 
   await plugin.onload();
   await (plugin as unknown as { runPrompt(prompt: string): Promise<void> }).runPrompt("{}");
 
-  expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki: error - OpenAI request failed: 401 bad key");
+  expect(plugin.statusBarItems[0].text).toBe("ContextOS: error - OpenAI request failed: 401 bad key");
   expect(notices).toContain("OpenAI request failed: 401 bad key");
 });
 
@@ -426,6 +430,6 @@ test("runPrompt localizes invalid OpenAI JSON responses at the UI boundary", asy
   await plugin.onload();
   await (plugin as unknown as { runPrompt(prompt: string): Promise<void> }).runPrompt("{}");
 
-  expect(plugin.statusBarItems[0].text).toBe("Auto LLM Wiki：错误 - OpenAI 响应不是 JSON。请检查 API URL；它应指向聊天补全端点。");
+  expect(plugin.statusBarItems[0].text).toBe("ContextOS：错误 - OpenAI 响应不是 JSON。请检查 API URL；它应指向聊天补全端点。");
   expect(notices).toContain("OpenAI 响应不是 JSON。请检查 API URL；它应指向聊天补全端点。");
 });

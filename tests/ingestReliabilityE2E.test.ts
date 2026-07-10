@@ -1,4 +1,4 @@
-import * as obsidian from "obsidian";
+﻿import * as obsidian from "obsidian";
 import { __setLanguage } from "./obsidianMock";
 import LLMWikiPlugin from "../src/main";
 import { hashContent } from "../src/rawTracker";
@@ -67,7 +67,7 @@ test("skips ingest when the raw file mtime and size are unchanged", async () => 
 
   expect(requestSpy).not.toHaveBeenCalled();
   expect(reads).not.toContain("raw/note.md");
-  expect(notices).toContain("Auto LLM Wiki: no new or changed raw files.");
+  expect(notices).toContain("ContextOS: no new or changed raw files.");
   expect(modals).toHaveLength(0);
 });
 
@@ -88,7 +88,7 @@ test("re-ingests when a legacy string-hash state file changes on disk", async ()
   await runIngest(plugin);
 
   expect(requestSpy).toHaveBeenCalledTimes(1);
-  expect(notices).toContain("Auto LLM Wiki: review proposed changes.");
+  expect(notices).toContain("ContextOS: review proposed changes.");
 });
 
 test("retries a transient 5xx during ingest, then applies the reviewed changes", async () => {
@@ -110,14 +110,14 @@ test("retries a transient 5xx during ingest, then applies the reviewed changes",
   await runIngest(plugin);
 
   expect(requestSpy).toHaveBeenCalledTimes(2);
-  expect(notices).toContain("Auto LLM Wiki: review proposed changes.");
+  expect(notices).toContain("ContextOS: review proposed changes.");
   expect(savedData).toHaveLength(0);
 
   const latestModal = modals[modals.length - 1]!;
   await latestModal.contentEl.buttons[0].onclick();
 
   expect(files.get("wiki/notes/note.md")?.content).toBe("# Note");
-  expect(notices).toContain("Auto LLM Wiki changes applied.");
+  expect(notices).toContain("ContextOS changes applied.");
 });
 
 test("surfaces a truncated-response error during ingest without applying changes", async () => {

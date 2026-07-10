@@ -1,4 +1,4 @@
-import * as obsidian from "obsidian";
+﻿import * as obsidian from "obsidian";
 import LLMWikiPlugin from "../src/main";
 import { hashBinaryContent } from "../src/rawTracker";
 
@@ -75,8 +75,8 @@ test("ingests a changed raw PDF into the wiki after review", async () => {
   const promptSentToModel = JSON.parse(String(modelRequest.body)).messages[1].content;
   expect(promptSentToModel).toContain("Source path: raw/report.pdf");
   expect(promptSentToModel).toContain("PDF first page\n\nPDF second page");
-  expect(notices).toContain("Auto LLM Wiki: found 1 raw source candidate, including PDFs: raw/report.pdf");
-  expect(notices).toContain("Auto LLM Wiki: extracting text from PDF raw/report.pdf...");
+  expect(notices).toContain("ContextOS: found 1 raw source candidate, including PDFs: raw/report.pdf");
+  expect(notices).toContain("ContextOS: extracting text from PDF raw/report.pdf...");
   expect(files.has("wiki/reports/report.md")).toBe(false);
   expect(savedData).toHaveLength(0);
 
@@ -135,7 +135,12 @@ test("uses vision OCR fallback for scanned PDFs before ingesting", async () => {
   ]);
   const savedData: unknown[] = [];
   const plugin = new (LLMWikiPlugin as unknown as { new(): LLMWikiPlugin & { statusBarItems: Array<{ text: string; history: string[] }> } })();
-  jest.spyOn(plugin, "loadData").mockResolvedValue({ openAIApiKey: "key", rawFileState: {} });
+  jest.spyOn(plugin, "loadData").mockResolvedValue({
+    providers: [{ id: "default-openai", type: "openai", name: "OpenAI", apiKey: "key", apiUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4.1-mini", enabled: true }],
+    activeProviderId: "default-openai",
+    visionProviderId: "default-openai",
+    rawFileState: {}
+  });
   jest.spyOn(plugin, "saveData").mockImplementation(async (data) => {
     savedData.push(data);
   });
@@ -166,7 +171,7 @@ test("uses vision OCR fallback for scanned PDFs before ingesting", async () => {
   if (typeof ingestRequest === "string") throw new Error("Expected object request");
   const ingestPrompt = JSON.parse(String(ingestRequest.body)).messages[1].content;
   expect(ingestPrompt).toContain("福利微课堂\n中国中检福建公司");
-  expect(notices).toContain("Auto LLM Wiki: OCR PDF page 1 from raw/scanned.pdf...");
+  expect(notices).toContain("ContextOS: OCR PDF page 1 from raw/scanned.pdf...");
 
   const latestModal = modals[modals.length - 1]!;
   await latestModal.contentEl.buttons[0].onclick();

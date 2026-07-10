@@ -1,4 +1,4 @@
-import * as obsidian from "obsidian";
+﻿import * as obsidian from "obsidian";
 import { ChatController, ChatMessage, ChatState, ChatView } from "../src/chatView";
 import { __setLanguage } from "./obsidianMock";
 
@@ -67,7 +67,7 @@ function latestModalContent(): MockModalContent {
   return instances[instances.length - 1].contentEl;
 }
 
-const SEND = "auto-llm-wiki-chat-send";
+const SEND = "contextos-chat-send";
 
 beforeEach(() => {
   __setLanguage("en");
@@ -108,7 +108,7 @@ test("missing API key surfaces a notice and does not call the model", async () =
   await clickButton(content, SEND);
 
   expect(answerChat).not.toHaveBeenCalled();
-  expect(notices).toContain("Set your OpenAI API key in Auto LLM Wiki settings.");
+  expect(notices).toContain("Set your OpenAI API key in ContextOS settings.");
 });
 
 test("an error is surfaced and the input is re-enabled", async () => {
@@ -145,7 +145,7 @@ test("Save to wiki asks the controller to file the preceding question and this r
 
   content.fields[0].value = "the question";
   await clickButton(content, SEND); // renders a Save button on the reply
-  await clickButton(content, "auto-llm-wiki-chat-save");
+  await clickButton(content, "contextos-chat-save");
 
   expect(saveChatAnswer).toHaveBeenCalledWith("the question", "the reply");
 });
@@ -154,7 +154,7 @@ test("a suggestion chip sends that prompt", async () => {
   const answerChat = jest.fn(async (_messages: ChatMessage[]) => "reply");
   const { content } = await openView(baseController({ answerChat }));
 
-  await clickButton(content, "auto-llm-wiki-chat-suggestion"); // first chip
+  await clickButton(content, "contextos-chat-suggestion"); // first chip
 
   expect(answerChat).toHaveBeenCalledTimes(1);
   const messages = answerChat.mock.calls[0][0];
@@ -168,7 +168,7 @@ test("New chat clears the history so the next turn starts fresh", async () => {
   content.fields[0].value = "first";
   await clickButton(content, SEND);
 
-  await clickButton(content, "auto-llm-wiki-chat-newchat");
+  await clickButton(content, "contextos-chat-newchat");
 
   content.fields[0].value = "second";
   await clickButton(content, SEND);
@@ -215,7 +215,7 @@ test("Copy writes the reply to the clipboard", async () => {
     const { content } = await openView(baseController({ answerChat: async () => "the reply" }));
     content.fields[0].value = "q";
     await clickButton(content, SEND);
-    await clickButton(content, "auto-llm-wiki-chat-copy");
+    await clickButton(content, "contextos-chat-copy");
 
     expect(writeText).toHaveBeenCalledWith("the reply");
     jest.runOnlyPendingTimers();
@@ -233,11 +233,11 @@ test("conversations coexist: switching back keeps each conversation's history", 
   content.fields[0].value = "first question";
   await clickButton(content, SEND);
 
-  await clickButton(content, "auto-llm-wiki-chat-newchat"); // start a second conversation
+  await clickButton(content, "contextos-chat-newchat"); // start a second conversation
   content.fields[0].value = "second question";
   await clickButton(content, SEND);
 
-  await clickButton(content, "auto-llm-wiki-chat-history-toggle"); // open the history panel
+  await clickButton(content, "contextos-chat-history-toggle"); // open the history panel
   await findButtonByText(content, "first question").onclick!(); // switch back to conversation 1
 
   content.fields[0].value = "follow up";
@@ -264,7 +264,7 @@ test("New chat is usable while the previous conversation is still awaiting a rep
   const firstSend = findButton(content, SEND).onclick!(); // conv1 pending, not resolved yet
   expect(content.fields[0].disabled).toBe(true); // composer disabled while the active conv awaits
 
-  await clickButton(content, "auto-llm-wiki-chat-newchat"); // must not be blocked
+  await clickButton(content, "contextos-chat-newchat"); // must not be blocked
   expect(content.fields[0].disabled).toBe(false); // the new conversation is immediately usable
 
   content.fields[0].value = "second question";
@@ -290,7 +290,7 @@ test("switching conversations clears an unsent draft", async () => {
   const { content } = await openView(baseController({ loadChatState: () => state }));
 
   content.fields[0].value = "draft meant for c1";
-  await clickButton(content, "auto-llm-wiki-chat-history-toggle");
+  await clickButton(content, "contextos-chat-history-toggle");
   await findButtonByText(content, "Two").onclick!(); // switch to c2
 
   expect(content.fields[0].value).toBe("");
@@ -306,7 +306,7 @@ test("a background turn's failure still surfaces a notice", async () => {
 
   content.fields[0].value = "first";
   const firstSend = findButton(content, SEND).onclick!(); // conv1 pending
-  await clickButton(content, "auto-llm-wiki-chat-newchat"); // switch away to a new conversation
+  await clickButton(content, "contextos-chat-newchat"); // switch away to a new conversation
 
   rejectFirst(new Error("network boom"));
   await firstSend;
@@ -357,8 +357,8 @@ test("deleting a conversation asks for confirmation, then removes it", async () 
   };
   const { content } = await openView(baseController({ loadChatState: () => state, saveChatState }));
 
-  await clickButton(content, "auto-llm-wiki-chat-history-toggle"); // open history
-  buttonsByClass(content, "auto-llm-wiki-chat-history-delete")[0].onclick!(); // opens a confirm modal for c1
+  await clickButton(content, "contextos-chat-history-toggle"); // open history
+  buttonsByClass(content, "contextos-chat-history-delete")[0].onclick!(); // opens a confirm modal for c1
 
   expect(saveChatState).not.toHaveBeenCalled(); // nothing deleted until confirmed
   await latestModalContent().buttons[0].onclick!(); // confirm delete
@@ -376,8 +376,8 @@ test("cancelling the delete confirmation keeps the conversation", async () => {
   };
   const { content } = await openView(baseController({ loadChatState: () => state, saveChatState }));
 
-  await clickButton(content, "auto-llm-wiki-chat-history-toggle");
-  buttonsByClass(content, "auto-llm-wiki-chat-history-delete")[0].onclick!();
+  await clickButton(content, "contextos-chat-history-toggle");
+  buttonsByClass(content, "contextos-chat-history-delete")[0].onclick!();
   await latestModalContent().buttons[1].onclick!(); // cancel
 
   expect(saveChatState).not.toHaveBeenCalled();
@@ -391,8 +391,8 @@ test("renaming a conversation updates its title", async () => {
   };
   const { content } = await openView(baseController({ loadChatState: () => state, saveChatState }));
 
-  await clickButton(content, "auto-llm-wiki-chat-history-toggle");
-  buttonsByClass(content, "auto-llm-wiki-chat-history-rename")[0].onclick!(); // opens the rename modal
+  await clickButton(content, "contextos-chat-history-toggle");
+  buttonsByClass(content, "contextos-chat-history-rename")[0].onclick!(); // opens the rename modal
 
   const modal = latestModalContent();
   modal.textInputs[0].onchange!("New Title");

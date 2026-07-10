@@ -1,4 +1,4 @@
-import { ChangePlanPreviewModal } from "../src/previewModal";
+﻿import { ChangePlanPreviewModal } from "../src/previewModal";
 import { Notice } from "obsidian";
 import { __setLanguage } from "./obsidianMock";
 
@@ -18,7 +18,7 @@ test("applies critical shell width inline so modal widens without external CSS",
   modal.onOpen();
   const modalEl = modal.modalEl as unknown as { classes: string[]; styles: Record<string, string> };
 
-  expect(modalEl.classes).toContain("auto-llm-wiki-review-modal-shell");
+  expect(modalEl.classes).toContain("contextos-review-modal-shell");
   expect(modalEl.styles.width).toBe("min(1120px, 96vw)");
   expect(modalEl.styles["max-width"]).toBe("1120px");
 });
@@ -32,7 +32,7 @@ test("renders a content block for an empty-content update so blanking a file is 
   modal.onOpen();
   const contentEl = modal.contentEl as unknown as { classes: string[] };
 
-  expect(contentEl.classes).toContain("auto-llm-wiki-code-preview");
+  expect(contentEl.classes).toContain("contextos-code-preview");
 });
 
 test("renders a delete operation with its label and path", () => {
@@ -60,18 +60,18 @@ test("renders a polished card-based review layout", () => {
   const contentEl = modal.contentEl as unknown as { classes: string[]; texts: string[] };
 
   expect(contentEl.classes).toEqual(expect.arrayContaining([
-    "auto-llm-wiki-review-modal",
-    "auto-llm-wiki-review-hero",
-    "auto-llm-wiki-review-stats",
-    "auto-llm-wiki-stat-chip",
-    "auto-llm-wiki-operation-card",
-    "auto-llm-wiki-operation-badge",
-    "auto-llm-wiki-path-pill",
-    "auto-llm-wiki-code-preview",
-    "auto-llm-wiki-action-bar"
+    "contextos-review-modal",
+    "contextos-review-hero",
+    "contextos-review-stats",
+    "contextos-stat-chip",
+    "contextos-operation-card",
+    "contextos-operation-badge",
+    "contextos-path-pill",
+    "contextos-code-preview",
+    "contextos-action-bar"
   ]));
   expect(contentEl.texts).toEqual(expect.arrayContaining([
-    "Review Auto LLM Wiki changes",
+    "Review ContextOS changes",
     "Integrate source notes",
     "2 proposed file changes",
     "1 create",
@@ -108,7 +108,7 @@ test("shows an empty-plan explanation when there are no proposed operations", ()
   modal.onOpen();
   const contentEl = modal.contentEl as unknown as { texts: string[] };
 
-  expect(contentEl.texts).toContain("Review Auto LLM Wiki changes");
+  expect(contentEl.texts).toContain("Review ContextOS changes");
   expect(contentEl.texts).toContain("No file changes were proposed by the model.");
   expect(contentEl.texts).toContain("0 proposed file changes");
 });
@@ -124,7 +124,7 @@ test("localizes preview modal chrome in Simplified Chinese", () => {
   const contentEl = modal.contentEl as unknown as { texts: string[] };
 
   expect(contentEl.texts).toEqual(expect.arrayContaining([
-    "审阅 Auto LLM Wiki 变更",
+    "审阅 ContextOS 变更",
     "模型未提供摘要。",
     "应用变更",
     "创建"
@@ -149,7 +149,7 @@ test("updates status while applying changes and after success", async () => {
   const contentEl = modal.contentEl as unknown as { buttons: Array<{ onclick: () => Promise<void> }> };
   await contentEl.buttons[0].onclick();
 
-  expect(statuses).toEqual(["Auto LLM Wiki: applying changes...", "Auto LLM Wiki: applied"]);
+  expect(statuses).toEqual(["ContextOS: applying changes...", "ContextOS: applied"]);
 });
 
 test("updates status when applying changes fails", async () => {
@@ -173,8 +173,8 @@ test("updates status when applying changes fails", async () => {
   await contentEl.buttons[0].onclick();
 
   expect(statuses).toEqual([
-    "Auto LLM Wiki: applying changes...",
-    "Auto LLM Wiki: error - Folder does not exist"
+    "ContextOS: applying changes...",
+    "ContextOS: error - Folder does not exist"
   ]);
 });
 
@@ -197,5 +197,5 @@ test("shows an error notice when applying changes fails", async () => {
   const contentEl = modal.contentEl as unknown as { buttons: Array<{ onclick: () => Promise<void> }> };
   await contentEl.buttons[0].onclick();
 
-  expect(notices).toContain("Failed to apply Auto LLM Wiki changes: Folder does not exist");
+  expect(notices).toContain("Failed to apply ContextOS changes: Folder does not exist");
 });

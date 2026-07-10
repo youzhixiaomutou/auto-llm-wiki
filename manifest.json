@@ -1,9 +1,9 @@
 {
-  "id": "auto-llm-wiki",
-  "name": "Auto LLM Wiki",
-  "version": "0.1.11",
+  "id": "contextos",
+  "name": "ContextOS",
+  "version": "0.3.0",
   "minAppVersion": "1.7.2",
-  "description": "Maintain a Karpathy-style LLM Wiki with AI-assisted ingest, query, lint, and previewed file changes.",
-  "author": "youzhixiaomutou",
+  "description": "AI-assisted ingest, chat, lint, and git-backed wiki that compounds knowledge from 15+ raw formats — Markdown, PDF, Office docs, images, and more.",
+  "author": "stanleychen",
   "isDesktopOnly": false
 }

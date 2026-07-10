@@ -1,4 +1,4 @@
-import { __setLanguage } from "./obsidianMock";
+﻿import { __setLanguage } from "./obsidianMock";
 import {
   ENGLISH_TRANSLATIONS,
   OBSIDIAN_LANGUAGE_CODES,
@@ -33,7 +33,7 @@ test("unknown locale falls back to en", () => {
 });
 
 test("interpolates named placeholders", () => {
-  expect(t("status.extractingPdf", { path: "raw/a.pdf" })).toBe("Auto LLM Wiki: extracting text from PDF raw/a.pdf...");
+  expect(t("status.extractingPdf", { path: "raw/a.pdf" })).toBe("ContextOS: extracting text from PDF raw/a.pdf...");
 });
 
 test("provides English raw parser error messages", () => {
@@ -78,9 +78,9 @@ test("provides zh provider reliability error messages", () => {
 
 test("ingest command label reflects that it ingests changed raw files", () => {
   expect((ENGLISH_TRANSLATIONS as Record<string, string>)["command.ingestActiveSource"])
-    .toBe("Ingest changed raw files into Auto LLM Wiki");
+    .toBe("Ingest changed raw files into ContextOS");
   expect((SUPPORTED_TRANSLATIONS.zh as Record<string, string>)["command.ingestActiveSource"])
-    .toBe("将变更的原始文件导入 Auto LLM Wiki");
+    .toBe("将变更的原始文件导入 ContextOS");
 });
 
 test("supported translation keys match Obsidian language codes", () => {

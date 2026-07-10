@@ -2,6 +2,7 @@ import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const prod = process.argv[2] === "production";
@@ -37,6 +38,12 @@ const context = await esbuild.context({
 if (prod) {
   await context.rebuild();
   await context.dispose();
+
+  const buildDir = path.join(projectRoot, "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  for (const file of ["main.js", "styles.css", "manifest.json"]) {
+    fs.copyFileSync(path.join(projectRoot, file), path.join(buildDir, file));
+  }
 } else {
   await context.watch();
 }

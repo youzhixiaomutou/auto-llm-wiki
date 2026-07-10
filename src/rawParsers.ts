@@ -49,6 +49,7 @@ export interface RawParserContext {
   onPdfExtract?: (path: string) => void;
   pdfOcrProvider?: PdfOcrProvider;
   imageOcrProvider?: ImageOcrProvider;
+  ocrPageConcurrency?: number;
 }
 
 export interface RawParser {
@@ -90,6 +91,19 @@ function requireOfficeText(text: string, path: string): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : t("error.unknown");
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const worker = async (): Promise<void> => {
+    for (let index = cursor++; index < items.length; index = cursor++) {
+      results[index] = await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
 }
 
 function isRawParseFailedMessage(message: string, path: string): boolean {
@@ -706,19 +720,32 @@ const pdfParser: RawParser = {
     const pdfJs = await loadPdfJs() as PdfJs;
     const data = new Uint8Array(await app.vault.readBinary(file));
     const document = await pdfJs.getDocument({ data }).promise;
-    const pages: string[] = [];
+    const pages: string[] = new Array(document.numPages);
+    const ocrPages: Array<{ pageNumber: number; page: PdfPage }> = [];
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
       const page = await document.getPage(pageNumber);
       const textContent = await page.getTextContent();
       const pageText = textContent.items.map((item) => item.str ?? "").join(" ").trim();
       if (pageText) {
-        pages.push(pageText);
+        pages[pageNumber - 1] = pageText;
       } else if (context.pdfOcrProvider) {
-        const ocrText = (await context.pdfOcrProvider({ page, path: file.path, pageNumber })).trim();
-        if (ocrText) pages.push(ocrText);
+        ocrPages.push({ pageNumber, page });
+      } else {
+        pages[pageNumber - 1] = "";
       }
     }
-    const text = pages.join("\n\n");
+    if (ocrPages.length > 0 && context.pdfOcrProvider) {
+      const concurrency = Math.max(1, context.ocrPageConcurrency ?? 1);
+      const ocrProvider = context.pdfOcrProvider;
+      const ocrResults = await mapWithConcurrency(ocrPages, concurrency, async ({ pageNumber, page }) => {
+        const ocrText = (await ocrProvider({ page, path: file.path, pageNumber })).trim();
+        return { pageNumber, text: ocrText };
+      });
+      for (const { pageNumber, text } of ocrResults) {
+        pages[pageNumber - 1] = text;
+      }
+    }
+    const text = pages.filter((p) => p).join("\n\n");
     if (!text) throw new Error(t("error.noExtractablePdfText", { path: file.path }));
     return text;
   }

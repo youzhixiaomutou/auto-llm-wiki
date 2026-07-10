@@ -164,7 +164,8 @@ async function scanRawFile(
   state: Record<string, StoredRawFileEntry>,
   onPdfExtract?: (path: string) => void,
   pdfOcrProvider?: PdfOcrProvider,
-  imageOcrProvider?: ImageOcrProvider
+  imageOcrProvider?: ImageOcrProvider,
+  ocrPageConcurrency?: number
 ): Promise<RawFileScan> {
   const stat = readRawFileStat(file);
   const recorded = normalizeRawFileEntry(state[file.path]);
@@ -188,17 +189,17 @@ async function scanRawFile(
     const binaryBuffer = await app.vault.readBinary(file as TFile);
     const hash = await hashOpenXmlContent(binaryBuffer);
     if (matchesRecorded(hash)) return restamp(hash);
-    return changed(await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider), hash);
+    return changed(await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider, ocrPageConcurrency), hash);
   }
 
   if (isImageRawPath(file.path) || isPdfRawPath(file.path) || isBinaryOfficeRawPath(file.path)) {
     const binaryBuffer = await app.vault.readBinary(file as TFile);
     const hash = hashBinaryContent(binaryBuffer);
     if (matchesRecorded(hash)) return restamp(hash);
-    return changed(await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider), hash);
+    return changed(await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider, ocrPageConcurrency), hash);
   }
 
-  const content = await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider);
+  const content = await readRawFileContent(app, file as TFile, onPdfExtract, pdfOcrProvider, imageOcrProvider, ocrPageConcurrency);
   const hash = hashContent(content);
   return matchesRecorded(hash) ? restamp(hash) : changed(content, hash);
 }
@@ -212,11 +213,12 @@ export async function findChangedRawFiles(
   imageOcrProvider?: ImageOcrProvider
 ): Promise<RawScanResult> {
   const rawFiles = findRawFileCandidates(app.vault.getFiles(), settings).sourceFiles;
+  const ocrPageConcurrency = settings.ocrPageConcurrency;
   // Isolate per-file failures: one corrupt/unreadable file (or a failed OCR call) must not
   // abort the whole scan or discard siblings' results.
   const outcomes = await mapWithConcurrency<RawCandidateFile, RawFileScanOutcome>(rawFiles, RAW_SCAN_CONCURRENCY, async (file) => {
     try {
-      return { path: file.path, scan: await scanRawFile(app, file, state, onPdfExtract, pdfOcrProvider, imageOcrProvider) };
+      return { path: file.path, scan: await scanRawFile(app, file, state, onPdfExtract, pdfOcrProvider, imageOcrProvider, ocrPageConcurrency) };
     } catch (error) {
       const raw = error instanceof Error ? error.message : String(error);
       // Name the file exactly once: parser/OCR errors already embed the path (rawParseFailed);
@@ -245,9 +247,10 @@ async function readRawFileContent(
   file: TFile,
   onPdfExtract?: (path: string) => void,
   pdfOcrProvider?: PdfOcrProvider,
-  imageOcrProvider?: ImageOcrProvider
+  imageOcrProvider?: ImageOcrProvider,
+  ocrPageConcurrency?: number
 ): Promise<string> {
-  return readRawFileWithParser(app, file, { onPdfExtract, pdfOcrProvider, imageOcrProvider });
+  return readRawFileWithParser(app, file, { onPdfExtract, pdfOcrProvider, imageOcrProvider, ocrPageConcurrency });
 }
 
 export function updateRawFileState(state: RawFileState, files: ChangedRawFile[]): RawFileState {

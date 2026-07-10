@@ -1,14 +1,24 @@
-import { EventRef, Notice, Plugin, TAbstractFile, TFile } from "obsidian";
+import { EventRef, Notice, Plugin, TAbstractFile, TFile, requestUrl } from "obsidian";
 import { normalizePath, parseChangePlan, planHasDestructiveOperation, validateChangePlan } from "./changePlan";
 import { t } from "./i18n";
-import { buildChatContextMessage, buildChatSystemPrompt, buildIngestPrompt, buildLintPrompt, buildQueryPrompt, buildQuerySelectionPrompt, parseSelectedQueryPages } from "./prompts";
-import { OpenAIProvider, OpenAIProviderError } from "./providers/OpenAIProvider";
+import { templateEngine } from "./templateEngine";
+import { OpenAIProviderError } from "./providers/OpenAIProvider";
+import { ProviderError } from "./providers/BaseOpenAICompatibleProvider";
+import { providerRegistry } from "./providers/ProviderRegistry";
+import { registerBuiltinProviders } from "./providers/registerProviders";
 import { ChangePlanPreviewModal } from "./previewModal";
 import { ChatController, ChatMessage, ChatState, Conversation, ChatView, CHAT_VIEW_TYPE } from "./chatView";
-import { findChangedRawFiles, findRawFileCandidates, ImageOcrRequest, migrateRawFileState, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
-import { DEFAULT_SETTINGS, LLMWikiSettingTab } from "./settings";
-import { LLMWikiPluginData, LLMWikiSettings } from "./types";
+import { findChangedRawFiles, findRawFileCandidates, hashContent, ImageOcrRequest, migrateRawFileState, PdfOcrRequest, RawFileState, renderPdfPageToPngDataUrl, updateRawFileState } from "./rawTracker";
+import { DEFAULT_SETTINGS, getProviderConfigForOperation, LLMWikiSettingTab } from "./settings";
+import type { OperationType } from "./settings";
+import { LLMWikiPluginData, LLMWikiSettings, ProviderConfig } from "./types";
 import { applyChangePlan, listMarkdownFilePaths, listMarkdownFiles, readTextFile, readWikiPages } from "./vaultOps";
+import { extractJsonArray } from "./jsonExtract";
+import { EmbeddingsProvider } from "./embeddings/EmbeddingsProvider";
+import { OllamaEmbeddingsProvider, cosineSearch } from "./embeddings/OllamaEmbeddingsProvider";
+import { OpenAIEmbeddingsProvider } from "./embeddings/OpenAIEmbeddingsProvider";
+import { QdrantEmbeddingsProvider } from "./embeddings/QdrantEmbeddingsProvider";
+import { EmbeddingsStore } from "./embeddings/EmbeddingsStore";
 
 const QUERY_MAX_PAGES = 12;
 // Cap the conversation turns sent to the model so history + per-turn wiki context stays within
@@ -28,8 +38,11 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   private autoIngestRunning = false;
   private autoIngestPending = false;
   private autoIngestPollTimer?: number;
+  githubUser: string | null = null;
+  githubRepoExists = false;
 
   async onload(): Promise<void> {
+    registerBuiltinProviders();
     await this.loadSettings();
     this.statusBarItem = this.addStatusBarItem();
     this.setStatus(t("status.idle"));
@@ -56,16 +69,24 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       name: t("command.lintWiki"),
       callback: () => this.lintWiki()
     });
+
+    this.addCommand({
+      id: "push-wiki-changes",
+      name: t("command.pushWiki"),
+      callback: () => this.pushWikiCommand()
+    });
   }
 
   async loadSettings(): Promise<void> {
     const data = await this.loadData() as (LLMWikiPluginData & Partial<LLMWikiSettings> & { chatState?: ChatState }) | undefined;
-    // Keep persisted-but-non-setting data (rawFileState, chatState) and the removed `provider` key
-    // out of the settings object so they aren't re-saved as if they were live settings.
     const { rawFileState, chatState, ...rest } = data ?? {};
     const settingsData: Record<string, unknown> = { ...rest };
     delete settingsData.provider;
     this.settings = { ...DEFAULT_SETTINGS, ...settingsData };
+    // Migrate old single-provider fields to providers[] array.
+    this.settings = migrateProviderSettings(this.settings);
+    // Migrate old gitAutoCommit boolean to gitMode enum.
+    this.settings = migrateGitSettings(this.settings, settingsData);
     this.rawFileState = migrateRawFileState(rawFileState);
     this.chatState = normalizeChatState(chatState);
   }
@@ -78,8 +99,64 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     this.statusBarItem?.setText(message);
   }
 
-  private createProvider(): OpenAIProvider {
-    return new OpenAIProvider(undefined, { timeoutMs: this.settings.requestTimeoutMs });
+  private getProviderConfig(operation: OperationType = "text"): ProviderConfig | undefined {
+    return getProviderConfigForOperation(this.settings, operation);
+  }
+
+  private createProvider(operation: OperationType = "text"): import("./providers/LLMProvider").LLMProvider {
+    const config = this.getProviderConfig(operation);
+    if (!config) throw new Error(t("notice.missingOpenAIKey"));
+    return providerRegistry.getProvider(config, this.settings.requestTimeoutMs);
+  }
+
+  private getEmbeddingsProvider(): EmbeddingsProvider | undefined {
+    const backend = this.settings.embeddingsBackend;
+    if (backend === "none") return undefined;
+    if (backend === "ollama") {
+      return new OllamaEmbeddingsProvider(this.settings.embeddingsApiUrl, this.settings.embeddingsModel);
+    }
+    if (backend === "openai") {
+      return new OpenAIEmbeddingsProvider(
+        this.settings.embeddingsApiKey,
+        this.settings.embeddingsApiUrl,
+        this.settings.embeddingsModel
+      );
+    }
+    if (backend === "qdrant") {
+      return new QdrantEmbeddingsProvider(
+        this.settings.qdrantUrl,
+        this.settings.qdrantApiKey,
+        this.settings.qdrantCollection,
+        this.settings.embeddingsModel
+      );
+    }
+    return undefined;
+  }
+
+  private async updateEmbeddings(plan: import("./types").ChangePlan): Promise<void> {
+    if (this.settings.embeddingsBackend === "none") return;
+    const provider = this.getEmbeddingsProvider();
+    if (!provider) return;
+    const store = new EmbeddingsStore(this.app, this.settings);
+    this.setStatus(t("status.computingEmbeddings"));
+
+    for (const op of plan.operations) {
+      if (op.kind === "delete") {
+        await store.deleteByPath(op.path);
+      } else if (op.kind === "create" || op.kind === "update") {
+        try {
+          const content = await readTextFile(this.app, op.path);
+          const h = hashContent(content);
+          const existing = await store.loadAll();
+          const existingEntry = existing.find((e) => e.path === op.path);
+          if (existingEntry?.hash === h) continue;
+          const embedding = await provider.embed(content);
+          await store.save(op.path, h, embedding);
+        } catch {
+          // Silently skip embedding failures so they don't block the ingest flow
+        }
+      }
+    }
   }
 
   enableAutoIngestListeners(): void {
@@ -137,7 +214,8 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   private async ingestActiveSource(autoApply = false, quiet = false): Promise<void> {
-    if (!this.settings.openAIApiKey) {
+    const providerConfig = this.getProviderConfig("text");
+    if (!providerConfig?.apiKey) {
       if (!quiet) new Notice(t("notice.missingOpenAIKey"));
       return;
     }
@@ -156,22 +234,17 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
         if (!quiet) new Notice(message);
       }, (request) => this.ocrPdfPage(request), (request) => this.ocrImage(request));
       if (scan.failed.length > 0) {
-        // Each message already names its file exactly once (see findChangedRawFiles).
         const details = scan.failed.map((failure) => failure.message).join("; ");
         const failedMessage = t("notice.rawScanFailed", { details });
         this.setStatus(failedMessage);
         if (!quiet) new Notice(failedMessage);
       }
-      // Persist refreshed mtime/size for confirmed-unchanged files immediately (cache
-      // maintenance, independent of ingest) so the fast-path engages on later scans.
       if (Object.keys(scan.stamps).length > 0) {
         this.rawFileState = { ...this.rawFileState, ...scan.stamps };
         await this.saveSettings();
       }
       const changedRawFiles = scan.changed;
       if (changedRawFiles.length === 0) {
-        // Keep the failure surfaced as the final status when nothing else changed; only
-        // announce "no changes" when the scan was actually clean.
         if (scan.failed.length === 0) {
           this.setStatus(t("status.noRawChanges"));
           if (!quiet) new Notice(t("notice.noRawChanges"));
@@ -182,11 +255,15 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const readingMessage = t("status.readingVaultContext");
       this.setStatus(readingMessage);
       if (!quiet) new Notice(readingMessage);
-      const prompt = buildIngestPrompt({
+      const sourceTexts = changedRawFiles.map((file) =>
+        `---
+Source path: ${file.path}
+${file.content}`).join("\n");
+      const prompt = templateEngine.buildIngestPrompt(this.settings, {
         index: await readTextFile(this.app, this.settings.indexPath),
         log: await readTextFile(this.app, this.settings.logPath),
-        sources: changedRawFiles.map((file) => ({ path: file.path, content: file.content }))
-      }, this.settings);
+        sources: sourceTexts
+      });
       await this.runPrompt(prompt, async () => {
         this.rawFileState = updateRawFileState(this.rawFileState, changedRawFiles);
         await this.saveSettings();
@@ -207,17 +284,21 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   private async ocrPdfPage(request: PdfOcrRequest): Promise<string> {
+    const providerConfig = this.getProviderConfig("vision");
+    if (!providerConfig || !providerConfig.apiKey) {
+      throw new Error(t("error.noVisionProvider"));
+    }
     const message = t("status.ocrPdfPage", { pageNumber: request.pageNumber, path: request.path });
     this.setStatus(message);
     new Notice(message);
     const imageDataUrl = await renderPdfPageToPngDataUrl(request.page);
-    const provider = this.createProvider();
+    const provider = this.createProvider("vision");
     try {
       return await provider.completeVision({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
-        prompt: t("prompt.ocrPdfPage", { pageNumber: request.pageNumber, path: request.path }),
+        apiKey: providerConfig.apiKey,
+        apiUrl: providerConfig.apiUrl,
+        model: providerConfig.model,
+        prompt: templateEngine.getOcrPdfPrompt(this.settings, request.pageNumber, request.path),
         imageDataUrl
       });
     } catch (error) {
@@ -226,16 +307,20 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   private async ocrImage(request: ImageOcrRequest): Promise<string> {
+    const providerConfig = this.getProviderConfig("vision");
+    if (!providerConfig || !providerConfig.apiKey) {
+      throw new Error(t("error.noVisionProvider"));
+    }
     const message = t("status.ocrImage", { path: request.path });
     this.setStatus(message);
     new Notice(message);
-    const provider = this.createProvider();
+    const provider = this.createProvider("vision");
     try {
       return await provider.completeVision({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
-        prompt: t("prompt.ocrImage", { path: request.path }),
+        apiKey: providerConfig.apiKey,
+        apiUrl: providerConfig.apiUrl,
+        model: providerConfig.model,
+        prompt: templateEngine.getOcrImagePrompt(this.settings, request.path),
         imageDataUrl: request.imageDataUrl
       });
     } catch (error) {
@@ -256,7 +341,8 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   }
 
   hasApiKey(): boolean {
-    return Boolean(this.settings.openAIApiKey);
+    const config = this.getProviderConfig("text");
+    return Boolean(config?.apiKey);
   }
 
   // ChatController: the conversation store lives in plugin data so it survives the leaf closing and
@@ -280,11 +366,10 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
   // vault (no writes); errors are localized so the view can display error.message directly. The
   // whole body (retrieval + selection + the chat call) is inside the try so any failure is
   // localized and the status bar is always reset.
-  async answerChat(messages: ChatMessage[]): Promise<string> {
+  async answerChat(messages: ChatMessage[], onToken?: (token: string) => void): Promise<string> {
+    const providerConfig = this.getProviderConfig("chat");
     this.answerChatInFlight++;
     try {
-      // Retrieve against the recent conversation, not just the last message, so a follow-up like
-      // "expand on that" still pulls the pages the thread is actually about.
       const query = buildRetrievalQuery(messages);
       this.setStatus(t("status.readingVaultContext"));
       const index = await readTextFile(this.app, this.settings.indexPath);
@@ -292,31 +377,33 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const selectedPaths = await this.selectRelevantPages(index, query, pagePaths);
       const wikiPages = await readWikiPages(this.app, selectedPaths);
       this.setStatus(t("status.waitingModel"));
-      const provider = this.createProvider();
-      // Wiki context rides in the system message so the conversation array stays a clean sequence
-      // of alternating user/assistant turns (no synthetic user turn before the real question).
-      const systemContent = `${buildChatSystemPrompt(this.settings)}\n\n${buildChatContextMessage({ index, wikiPages }, this.settings)}`;
+      const provider = this.createProvider("chat");
+      const wikiPagesText = wikiPages.map((p) => `---
+Path: ${p.path}
+${p.content}`).join("\n\n");
+      const systemContent = `${templateEngine.buildChatSystemPrompt(this.settings)}\n\n${templateEngine.buildChatContextMessage(this.settings, { index, wikiPages: wikiPagesText })}`;
       return await provider.chat({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
+        apiKey: providerConfig?.apiKey ?? "",
+        apiUrl: providerConfig?.apiUrl ?? "",
+        model: providerConfig?.model ?? "",
         messages: [
           { role: "system", content: systemContent },
           ...messages.slice(-CHAT_HISTORY_MAX_MESSAGES)
-        ]
+        ],
+        onToken
       });
     } catch (error) {
       throw new Error(formatOpenAIErrorMessage(error, t("error.requestFailed")));
     } finally {
       this.answerChatInFlight--;
-      // Only clear the status bar when no other chat turn is still running.
       if (this.answerChatInFlight === 0) this.setStatus(t("status.idle"));
     }
   }
 
   // ChatController: file a finished Q&A back through the reviewed change-plan pipeline.
   async saveChatAnswer(question: string, answer: string): Promise<void> {
-    if (!this.settings.openAIApiKey) {
+    const providerConfig = this.getProviderConfig("text");
+    if (!providerConfig?.apiKey) {
       new Notice(t("notice.missingOpenAIKey"));
       return;
     }
@@ -326,13 +413,16 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const pagePaths = this.listWikiContentPages();
       const selectedPaths = await this.selectRelevantPages(index, question, pagePaths);
       const wikiPages = await readWikiPages(this.app, selectedPaths);
-      const prompt = buildQueryPrompt({
+      const wikiPagesText = wikiPages.map((p) => `---
+Path: ${p.path}
+${p.content}`).join("\n\n");
+      const prompt = templateEngine.buildQueryPrompt(this.settings, {
         index,
         log: await readTextFile(this.app, this.settings.logPath),
         question,
         answer,
-        wikiPages
-      }, this.settings);
+        wikiPages: wikiPagesText
+      });
       await this.runPrompt(prompt);
     } catch (error) {
       const message = formatOpenAIErrorMessage(error, t("error.requestFailed"));
@@ -352,17 +442,51 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
 
   // Karpathy-style query: read the index first and let the model pick the relevant pages,
   // then drill into only those. Skip the extra call when the wiki is small enough to send whole.
+  // When embeddings are configured, use vector similarity instead of an LLM call.
   private async selectRelevantPages(index: string, question: string, pagePaths: string[]): Promise<string[]> {
     if (pagePaths.length <= QUERY_MAX_PAGES) return pagePaths;
+
+    if (this.settings.embeddingsBackend !== "none") {
+      try {
+        const provider = this.getEmbeddingsProvider();
+        if (!provider) return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+        const store = new EmbeddingsStore(this.app, this.settings);
+        const storedEmbeddings = await store.loadAll();
+
+        if (storedEmbeddings.length === 0) return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+
+        const queryEmbedding = await provider.embed(question);
+
+        if (provider instanceof QdrantEmbeddingsProvider) {
+          const results = await provider.searchRemote(queryEmbedding, QUERY_MAX_PAGES);
+          const paths = results.filter((r) => pagePaths.includes(r.path)).map((r) => r.path);
+          return paths.length > 0 ? paths : this.selectRelevantPagesViaLLM(index, question, pagePaths);
+        }
+
+        const available = storedEmbeddings.filter((e) => pagePaths.includes(e.path));
+        if (available.length === 0) return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+
+        const results = cosineSearch(queryEmbedding, available, QUERY_MAX_PAGES);
+        return results.map((r) => r.path);
+      } catch {
+        return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+      }
+    }
+
+    return this.selectRelevantPagesViaLLM(index, question, pagePaths);
+  }
+
+  private async selectRelevantPagesViaLLM(index: string, question: string, pagePaths: string[]): Promise<string[]> {
+    const providerConfig = this.getProviderConfig("chat");
     const selectingMessage = t("status.selectingPages");
     this.setStatus(selectingMessage);
     new Notice(selectingMessage);
-    const provider = this.createProvider();
+    const provider = this.createProvider("chat");
     const response = await provider.complete({
-      apiKey: this.settings.openAIApiKey,
-      apiUrl: this.settings.openAIApiUrl,
-      model: this.settings.openAIModel,
-      prompt: buildQuerySelectionPrompt({ index, question, pagePaths }, this.settings)
+      apiKey: providerConfig?.apiKey ?? "",
+      apiUrl: providerConfig?.apiUrl ?? "",
+      model: providerConfig?.model ?? "",
+      prompt: templateEngine.buildQuerySelectionPrompt(this.settings, { index, question, pagePaths: pagePaths.join("\n") })
     });
     return parseSelectedQueryPages(response, pagePaths, QUERY_MAX_PAGES);
   }
@@ -374,17 +498,21 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     const wikiPages = await listMarkdownFiles(this.app, this.settings.wikiFolder);
     const rawPaths = findRawFileCandidates(this.app.vault.getFiles(), this.settings)
       .sourceFiles.map((file) => file.path).sort();
-    const prompt = buildLintPrompt({
+    const wikiPagesText = wikiPages.map((p) => `---
+Path: ${p.path}
+${p.content}`).join("\n\n");
+    const prompt = templateEngine.buildLintPrompt(this.settings, {
       index: await readTextFile(this.app, this.settings.indexPath),
       log: await readTextFile(this.app, this.settings.logPath),
-      wikiPages,
-      rawPaths
-    }, this.settings);
+      wikiPages: wikiPagesText,
+      rawPaths: rawPaths.join("\n")
+    });
     await this.runPrompt(prompt);
   }
 
   private async runPrompt(prompt: string, onApplySuccess?: () => Promise<void>, autoApply = false): Promise<void> {
-    if (!this.settings.openAIApiKey) {
+    const providerConfig = this.getProviderConfig("text");
+    if (!providerConfig?.apiKey) {
       new Notice(t("notice.missingOpenAIKey"));
       return;
     }
@@ -392,36 +520,284 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
       const waitingMessage = t("status.waitingModel");
       this.setStatus(waitingMessage);
       new Notice(waitingMessage);
-      const provider = this.createProvider();
+      const provider = this.createProvider("text");
       const response = await provider.complete({
-        apiKey: this.settings.openAIApiKey,
-        apiUrl: this.settings.openAIApiUrl,
-        model: this.settings.openAIModel,
+        apiKey: providerConfig.apiKey,
+        apiUrl: providerConfig.apiUrl,
+        model: providerConfig.model,
         prompt
       });
       const validatingMessage = t("status.validatingChanges");
       this.setStatus(validatingMessage);
       new Notice(validatingMessage);
       const plan = validateChangePlan(parseChangePlan(response), this.settings);
-      // Destructive plans always go through review even when auto-ingest would otherwise apply
-      // automatically (single source of truth: planHasDestructiveOperation).
       if (autoApply && !planHasDestructiveOperation(plan)) {
         const applyingMessage = t("status.applyingChanges");
         this.setStatus(applyingMessage);
         new Notice(applyingMessage);
         await applyChangePlan(this.app, plan);
         await onApplySuccess?.();
+        await this.updateEmbeddings(plan);
+        await this.tryGitCommit(plan);
         this.setStatus(t("status.applied"));
         new Notice(t("notice.changesApplied"));
         return;
       }
       this.setStatus(t("status.reviewChanges"));
       new Notice(t("notice.reviewChanges"));
-      new ChangePlanPreviewModal(this.app, plan, (message) => this.setStatus(message), onApplySuccess).open();
+      new ChangePlanPreviewModal(this.app, plan, (message) => this.setStatus(message), async () => {
+        await onApplySuccess?.();
+        await this.updateEmbeddings(plan);
+        await this.tryGitCommit(plan);
+      }).open();
     } catch (error) {
       const message = formatOpenAIErrorMessage(error, t("error.requestFailed"));
       this.setStatus(t("status.error", { message }));
       new Notice(message);
+    }
+  }
+
+  private async execGit(args: string, env?: Record<string, string>): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    if (typeof (window as unknown as { require?: (module: string) => unknown }).require === "undefined") {
+      return { ok: false, stdout: "", stderr: "Electron require not available" };
+    }
+    const childProcess = (window as unknown as { require: (module: string) => { exec: (cmd: string, options: unknown, callback: (err: unknown, stdout: string, stderr: string) => void) => unknown } }).require("child_process");
+    const vaultPath = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.() ?? "";
+    if (!vaultPath) return { ok: false, stdout: "", stderr: "Vault path not available" };
+    return new Promise((resolve) => {
+      childProcess.exec(args, { cwd: vaultPath, env: { ...process.env, ...env } }, (err, stdout, stderr) => {
+        resolve({ ok: !err, stdout: (stdout || "").trim(), stderr: (stderr || "").trim() });
+      });
+    });
+  }
+
+  private async ensureGitRepo(): Promise<boolean> {
+    const check = await this.execGit("git --version");
+    if (!check.ok) {
+      new Notice(t("notice.gitNotInstalled"));
+      return false;
+    }
+    const repoCheck = await this.execGit("git rev-parse --git-dir");
+    if (repoCheck.ok) return true;
+    const init = await this.execGit("git init");
+    if (!init.ok) {
+      new Notice(t("notice.gitInitFailed"));
+      return false;
+    }
+    return true;
+  }
+
+  private async ensureRemote(): Promise<boolean> {
+    if (!this.settings.gitRemoteUrl) return true;
+    const env = this.gitEnv();
+    const check = await this.execGit("git remote get-url origin", env);
+    if (check.ok) {
+      if (check.stdout === this.settings.gitRemoteUrl) return true;
+      const setUrl = await this.execGit(`git remote set-url origin ${this.settings.gitRemoteUrl}`, env);
+      if (!setUrl.ok) {
+        new Notice(`Failed to update remote: ${setUrl.stderr}`);
+        return false;
+      }
+      return true;
+    }
+    const add = await this.execGit(`git remote add origin ${this.settings.gitRemoteUrl}`, env);
+    if (!add.ok) {
+      new Notice(`Failed to add remote: ${add.stderr}`);
+      return false;
+    }
+    return true;
+  }
+
+  private async gitPush(): Promise<boolean> {
+    const env = this.gitEnv();
+    const result = await this.execGit("git push origin HEAD", env);
+    if (result.ok) {
+      new Notice(t("notice.gitPushSuccess"));
+      return true;
+    }
+    new Notice(t("notice.gitPushFailed", { message: result.stderr }));
+    return false;
+  }
+
+  private async tryGitCommit(plan: import("./types").ChangePlan): Promise<void> {
+    if (this.settings.gitMode === "none") return;
+    try {
+      if (!(await this.ensureGitRepo())) return;
+      if (this.settings.gitMode === "remote") {
+        if (!(await this.ensureRemote())) return;
+      }
+      const message = templateEngine.buildGitCommitMessage(this.settings, {
+        summary: plan.summary,
+        operationCount: plan.operations.length
+      });
+      const wikiFolder = this.settings.wikiFolder;
+      const env = this.gitEnv();
+      const result = await this.execGit(`git add "${wikiFolder}" && git commit -m "${message.replace(/"/g, '\\"')}"`, env);
+      if (result.ok) {
+        new Notice(t("notice.gitCommitted"));
+      } else if (result.stderr.includes("nothing to commit")) {
+        return;
+      } else {
+        new Notice(`Git commit failed: ${result.stderr}`);
+        return;
+      }
+      if (this.settings.gitMode === "remote" && this.settings.gitAutoPush) {
+        await this.gitPush();
+      }
+    } catch (e) {
+      new Notice(`Git error: ${e}`);
+    }
+  }
+
+  private async pushWikiCommand(): Promise<void> {
+    if (this.settings.gitMode === "none") {
+      new Notice(t("notice.gitNotEnabled"));
+      return;
+    }
+    new Notice(t("notice.gitPushing"));
+    await this.gitPush();
+  }
+
+  private gitEnv(): Record<string, string> | undefined {
+    if (this.settings.gitMode !== "remote") return undefined;
+    if (this.settings.gitRemoteMethod !== "ssh-keygen") return undefined;
+    if (!this.settings.gitSshKeyPath) return undefined;
+    return { GIT_SSH_COMMAND: `ssh -i "${this.settings.gitSshKeyPath}" -o StrictHostKeyChecking=accept-new` };
+  }
+
+  async generateSshKey(): Promise<void> {
+    if (typeof (window as unknown as { require?: (module: string) => unknown }).require === "undefined") {
+      new Notice("Electron require not available");
+      return;
+    }
+    try {
+      const os = (window as unknown as { require: (module: string) => { homedir: () => string } }).require("os");
+      const path = (window as unknown as { require: (module: string) => { join: (...segments: string[]) => string } }).require("path");
+      const fs = (window as unknown as { require: (module: string) => { existsSync: (p: string) => boolean; readFileSync: (p: string, enc: string) => string } }).require("fs");
+      const childProcess = (window as unknown as { require: (module: string) => { exec: (cmd: string, cb: (err: unknown, stdout: string, stderr: string) => void) => unknown } }).require("child_process");
+      const keyPath = path.join(os.homedir(), ".ssh", "contextos_ed25519");
+      if (fs.existsSync(keyPath)) {
+        new Notice(t("notice.gitSshKeyExists", { path: keyPath }));
+        this.settings = { ...this.settings, gitSshKeyPath: keyPath };
+        await this.saveSettings();
+        return;
+      }
+      await new Promise<void>((resolve, reject) => {
+        childProcess.exec(`ssh-keygen -t ed25519 -C "contextos" -f "${keyPath}" -N ""`, (err: unknown, _stdout: string, stderr: string) => {
+          if (err) { reject(new Error((stderr || "").trim() || "ssh-keygen failed")); return; }
+          resolve();
+        });
+      });
+      this.settings = { ...this.settings, gitSshKeyPath: keyPath };
+      await this.saveSettings();
+      new Notice(t("notice.gitSshKeyGenerated"));
+    } catch (e) {
+      new Notice(`SSH key generation failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async testGitConnection(): Promise<void> {
+    const check = await this.execGit("git --version");
+    if (!check.ok) {
+      new Notice(t("notice.gitNotInstalled"));
+      return;
+    }
+    if (this.settings.gitMode === "remote" && this.settings.gitRemoteUrl) {
+      const env = this.gitEnv();
+      const result = await this.execGit(`git ls-remote ${this.settings.gitRemoteUrl}`, env);
+      if (result.ok) {
+        new Notice(t("notice.gitConnectionSucceeded"));
+      } else {
+        new Notice(t("notice.gitConnectionFailed", { message: result.stderr }));
+      }
+    } else if (this.settings.gitMode === "remote") {
+      new Notice("No remote URL configured.");
+    } else {
+      new Notice(t("notice.gitConnectionSucceeded"));
+    }
+  }
+
+  private async githubApi(path: string, opts?: { method?: string; body?: unknown }): Promise<{ ok: boolean; status: number; json: unknown }> {
+    const token = this.settings.gitHubToken;
+    try {
+      const response = await requestUrl({
+        url: `https://api.github.com${path}`,
+        method: opts?.method ?? "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json"
+        },
+        body: opts?.body ? JSON.stringify(opts.body) : undefined
+      });
+      return { ok: response.status >= 200 && response.status < 300, status: response.status, json: response.json };
+    } catch (e) {
+      return { ok: false, status: (e as { status?: number }).status ?? 0, json: { message: (e as Error).message } };
+    }
+  }
+
+  async fetchGitHubUser(): Promise<string | null> {
+    try {
+      const result = await this.githubApi("/user");
+      if (result.ok) {
+        const data = result.json as { login: string };
+        return data.login ?? null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async checkGitHubRepo(owner: string, repo: string): Promise<boolean> {
+    try {
+      const result = await this.githubApi(`/repos/${owner}/${repo}`);
+      return result.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async createGitHubRepo(): Promise<string | null> {
+    try {
+      const user = await this.fetchGitHubUser();
+      if (!user) {
+        new Notice(t("notice.gitHubAccountFailed"));
+        return null;
+      }
+      const exists = await this.checkGitHubRepo(user, this.settings.gitHubRepoName);
+      if (exists) {
+        const url = `https://github.com/${user}/${this.settings.gitHubRepoName}`;
+        new Notice(t("notice.gitRepoExists"));
+        const remoteUrl = `https://${this.settings.gitHubToken}@github.com/${user}/${this.settings.gitHubRepoName}.git`;
+        this.settings = { ...this.settings, gitRemoteUrl: remoteUrl };
+        await this.saveSettings();
+        return url;
+      }
+      const result = await this.githubApi("/user/repos", {
+        method: "POST",
+        body: { name: this.settings.gitHubRepoName, private: true, auto_init: false }
+      });
+      if (result.ok) {
+        const data = result.json as { html_url: string };
+        const url = data.html_url ?? `https://github.com/${user}/${this.settings.gitHubRepoName}`;
+        const remoteUrl = `https://${this.settings.gitHubToken}@github.com/${user}/${this.settings.gitHubRepoName}.git`;
+        this.settings = { ...this.settings, gitRemoteUrl: remoteUrl };
+        await this.saveSettings();
+        new Notice(t("notice.gitRepoCreated", { url }));
+        return url;
+      }
+      const errData = result.json as { message?: string };
+      let errorMsg = errData.message ?? `HTTP ${result.status}`;
+      if (result.status === 403 || result.status === 401) {
+        errorMsg = `${errorMsg}. Ensure your GitHub token has the "repo" scope enabled.`;
+      }
+      new Notice(t("notice.gitRepoCreateFailed", { message: errorMsg }));
+      return null;
+    } catch (e) {
+      new Notice(t("notice.gitRepoCreateFailed", { message: e instanceof Error ? e.message : String(e) }));
+      return null;
     }
   }
 }
@@ -488,7 +864,7 @@ function sanitizeConversation(conversation: Conversation): Conversation {
 }
 
 export function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string): string {
-  if (error instanceof OpenAIProviderError) {
+  if (error instanceof OpenAIProviderError || error instanceof ProviderError) {
     if (error.kind === "request") {
       return t("error.openAIRequestFailed", { message: error.message });
     }
@@ -507,4 +883,39 @@ export function formatOpenAIErrorMessage(error: unknown, fallbackMessage: string
   }
 
   return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function parseSelectedQueryPages(response: string, availablePaths: string[], limit: number): string[] {
+  const available = new Set(availablePaths);
+  const parsed = extractJsonArray(response);
+  const selected = Array.isArray(parsed)
+    ? parsed.filter((value): value is string => typeof value === "string" && available.has(value))
+    : [];
+  const deduped = Array.from(new Set(selected));
+  return deduped.length > 0 ? deduped.slice(0, limit) : availablePaths.slice(0, limit);
+}
+
+function migrateProviderSettings(settings: LLMWikiSettings): LLMWikiSettings {
+  if (settings.providers && settings.providers.length > 0) return settings;
+  // Migrate old single-provider fields to providers[] array.
+  const providers: ProviderConfig[] = [{
+    id: "default-openai",
+    type: "openai",
+    name: "OpenAI",
+    apiKey: settings.openAIApiKey,
+    apiUrl: settings.openAIApiUrl,
+    model: settings.openAIModel,
+    enabled: true
+  }];
+  return { ...settings, providers, activeProviderId: "default-openai" };
+}
+
+function migrateGitSettings(settings: LLMWikiSettings, data: Record<string, unknown>): LLMWikiSettings {
+  if (!("gitAutoCommit" in data)) return settings;
+  const gitAutoCommit = data["gitAutoCommit"];
+  delete data["gitAutoCommit"];
+  return {
+    ...settings,
+    gitMode: gitAutoCommit ? "local" : "none"
+  };
 }

@@ -29,9 +29,11 @@ export interface ChatRequest {
   apiUrl?: string;
   model: string;
   messages: ChatMessage[];
+  onToken?: (token: string) => void;
 }
 
 export interface LLMProvider {
+  readonly providerType: string;
   complete(request: CompleteRequest): Promise<string>;
   completeVision(request: VisionCompleteRequest): Promise<string>;
   chat(request: ChatRequest): Promise<string>;

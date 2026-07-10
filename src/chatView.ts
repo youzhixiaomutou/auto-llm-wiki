@@ -1,7 +1,7 @@
 import { App, ItemView, MarkdownRenderer, Modal, Notice, Setting, WorkspaceLeaf, setIcon } from "obsidian";
 import { t } from "./i18n";
 
-export const CHAT_VIEW_TYPE = "auto-llm-wiki-chat";
+export const CHAT_VIEW_TYPE = "contextos-chat";
 
 export type ChatRole = "user" | "assistant";
 export interface ChatMessage {
@@ -27,7 +27,7 @@ export interface ChatState {
 // Narrow seam between the view (UI only) and the plugin (settings/provider/vault/persistence). The
 // plugin implements this structurally so the view can be unit-tested with a fake controller.
 export interface ChatController {
-  answerChat(messages: ChatMessage[]): Promise<string>;
+  answerChat(messages: ChatMessage[], onToken?: (token: string) => void): Promise<string>;
   saveChatAnswer(question: string, answer: string): Promise<void>;
   hasApiKey(): boolean;
   setStatus(message: string): void;
@@ -102,18 +102,18 @@ export class ChatView extends ItemView {
 
     const root = this.contentEl;
     root.empty();
-    root.addClass("auto-llm-wiki-chat");
+    root.addClass("contextos-chat");
     // A few layout-critical styles inline so the panel is usable before styles.css loads.
     this.applyStyles(root, { display: "flex", "flex-direction": "column", height: "100%", padding: "0" });
 
     this.renderHeader(root);
 
     this.listEl = root.createDiv();
-    this.listEl.addClass("auto-llm-wiki-chat-messages");
+    this.listEl.addClass("contextos-chat-messages");
     this.applyStyles(this.listEl, { flex: "1", overflow: "auto" });
 
     this.historyEl = root.createDiv();
-    this.historyEl.addClass("auto-llm-wiki-chat-history");
+    this.historyEl.addClass("contextos-chat-history");
     this.applyStyles(this.historyEl, { flex: "1", overflow: "auto" });
 
     this.renderComposer(root);
@@ -165,26 +165,26 @@ export class ChatView extends ItemView {
 
   private renderHeader(root: HTMLElement): void {
     const header = root.createDiv();
-    header.addClass("auto-llm-wiki-chat-header");
+    header.addClass("contextos-chat-header");
 
     const historyButton = header.createEl("button");
-    historyButton.addClass("auto-llm-wiki-chat-iconbtn");
-    historyButton.addClass("auto-llm-wiki-chat-history-toggle");
+    historyButton.addClass("contextos-chat-iconbtn");
+    historyButton.addClass("contextos-chat-history-toggle");
     setIcon(historyButton, "history");
     historyButton.setAttr("aria-label", t("chat.conversations"));
     historyButton.setAttr("title", t("chat.conversations"));
     historyButton.onclick = () => this.toggleHistory();
 
     const heading = header.createDiv();
-    heading.addClass("auto-llm-wiki-chat-heading");
+    heading.addClass("contextos-chat-heading");
     this.titleEl = heading.createEl("div");
-    this.titleEl.addClass("auto-llm-wiki-chat-title");
+    this.titleEl.addClass("contextos-chat-title");
     const subtitle = heading.createEl("div", { text: t("chat.subtitle") });
-    subtitle.addClass("auto-llm-wiki-chat-subtitle");
+    subtitle.addClass("contextos-chat-subtitle");
 
     const newChat = header.createEl("button");
-    newChat.addClass("auto-llm-wiki-chat-iconbtn");
-    newChat.addClass("auto-llm-wiki-chat-newchat");
+    newChat.addClass("contextos-chat-iconbtn");
+    newChat.addClass("contextos-chat-newchat");
     setIcon(newChat, "plus");
     newChat.setAttr("aria-label", t("chat.newChat"));
     newChat.setAttr("title", t("chat.newChat"));
@@ -218,7 +218,7 @@ export class ChatView extends ItemView {
 
     if (this.conversations.length === 0) {
       const empty = this.historyEl.createEl("div", { text: t("chat.historyEmpty") });
-      empty.addClass("auto-llm-wiki-chat-history-empty");
+      empty.addClass("contextos-chat-history-empty");
       this.historyRowEls.push(empty);
       return;
     }
@@ -227,25 +227,25 @@ export class ChatView extends ItemView {
     const ordered = [...this.conversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     for (const conversation of ordered) {
       const row = this.historyEl.createDiv();
-      row.addClass("auto-llm-wiki-chat-history-item-row");
+      row.addClass("contextos-chat-history-item-row");
       if (conversation.id === this.activeId) row.addClass("is-active");
       this.historyRowEls.push(row);
 
       const item = row.createEl("button", { text: conversation.title || t("chat.conversationUntitled") });
-      item.addClass("auto-llm-wiki-chat-history-item");
+      item.addClass("contextos-chat-history-item");
       item.onclick = () => this.switchConversation(conversation.id);
 
       const rename = row.createEl("button");
-      rename.addClass("auto-llm-wiki-chat-history-action");
-      rename.addClass("auto-llm-wiki-chat-history-rename");
+      rename.addClass("contextos-chat-history-action");
+      rename.addClass("contextos-chat-history-rename");
       setIcon(rename, "pencil");
       rename.setAttr("aria-label", t("chat.renameConversation"));
       rename.setAttr("title", t("chat.renameConversation"));
       rename.onclick = () => this.renameConversation(conversation.id);
 
       const del = row.createEl("button");
-      del.addClass("auto-llm-wiki-chat-history-action");
-      del.addClass("auto-llm-wiki-chat-history-delete");
+      del.addClass("contextos-chat-history-action");
+      del.addClass("contextos-chat-history-delete");
       setIcon(del, "trash-2");
       del.setAttr("aria-label", t("chat.deleteConversation"));
       del.setAttr("title", t("chat.deleteConversation"));
@@ -330,28 +330,28 @@ export class ChatView extends ItemView {
 
   private renderEmptyState(): void {
     const empty = this.listEl.createDiv();
-    empty.addClass("auto-llm-wiki-chat-empty");
+    empty.addClass("contextos-chat-empty");
     this.rowEls.push(empty);
     this.emptyEl = empty;
 
     const badge = empty.createDiv();
-    badge.addClass("auto-llm-wiki-chat-empty-icon");
+    badge.addClass("contextos-chat-empty-icon");
     setIcon(badge, "message-circle");
 
     const title = empty.createEl("div", { text: t("chat.emptyTitle") });
-    title.addClass("auto-llm-wiki-chat-empty-title");
+    title.addClass("contextos-chat-empty-title");
     const subtitle = empty.createEl("div", { text: t("chat.emptyState") });
-    subtitle.addClass("auto-llm-wiki-chat-empty-subtitle");
+    subtitle.addClass("contextos-chat-empty-subtitle");
 
     const label = empty.createEl("div", { text: t("chat.suggestionsLabel") });
-    label.addClass("auto-llm-wiki-chat-suggestions-label");
+    label.addClass("contextos-chat-suggestions-label");
 
     const suggestions = empty.createDiv();
-    suggestions.addClass("auto-llm-wiki-chat-suggestions");
+    suggestions.addClass("contextos-chat-suggestions");
     for (const key of SUGGESTION_KEYS) {
       const text = t(key);
       const chip = suggestions.createEl("button", { text });
-      chip.addClass("auto-llm-wiki-chat-suggestion");
+      chip.addClass("contextos-chat-suggestion");
       chip.onclick = () => this.useSuggestion(text);
     }
   }
@@ -367,25 +367,25 @@ export class ChatView extends ItemView {
   private renderMessage(message: ChatMessage, index: number): void {
     const row = this.listEl.createDiv();
     this.rowEls.push(row);
-    row.addClass("auto-llm-wiki-chat-message");
-    row.addClass(`auto-llm-wiki-chat-message-${message.role}`);
+    row.addClass("contextos-chat-message");
+    row.addClass(`contextos-chat-message-${message.role}`);
 
     if (message.role === "assistant") {
       const avatar = row.createDiv();
-      avatar.addClass("auto-llm-wiki-chat-avatar");
+      avatar.addClass("contextos-chat-avatar");
       setIcon(avatar, "sparkles");
     }
 
     const main = row.createDiv();
-    main.addClass("auto-llm-wiki-chat-main");
+    main.addClass("contextos-chat-main");
 
     if (message.role === "assistant") {
       const name = main.createEl("div", { text: t("chat.assistant") });
-      name.addClass("auto-llm-wiki-chat-name");
+      name.addClass("contextos-chat-name");
     }
 
     const body = main.createDiv();
-    body.addClass("auto-llm-wiki-chat-body");
+    body.addClass("contextos-chat-body");
     if (message.role === "assistant") {
       // Render assistant replies as Markdown so citations, code, lists, and [[wiki links]] render.
       // Fall back to plain text if rendering rejects, and guard the scroll against a closed view.
@@ -399,19 +399,19 @@ export class ChatView extends ItemView {
 
     if (message.role === "assistant") {
       const actions = main.createDiv();
-      actions.addClass("auto-llm-wiki-chat-actions");
+      actions.addClass("contextos-chat-actions");
 
       const copyButton = actions.createEl("button");
-      copyButton.addClass("auto-llm-wiki-chat-actionbtn");
-      copyButton.addClass("auto-llm-wiki-chat-copy");
+      copyButton.addClass("contextos-chat-actionbtn");
+      copyButton.addClass("contextos-chat-copy");
       setIcon(copyButton, "copy");
       copyButton.setAttr("aria-label", t("chat.copy"));
       copyButton.setAttr("title", t("chat.copy"));
       copyButton.onclick = () => this.handleCopy(message.content, copyButton);
 
       const saveButton = actions.createEl("button");
-      saveButton.addClass("auto-llm-wiki-chat-actionbtn");
-      saveButton.addClass("auto-llm-wiki-chat-save");
+      saveButton.addClass("contextos-chat-actionbtn");
+      saveButton.addClass("contextos-chat-save");
       setIcon(saveButton, "save");
       saveButton.setAttr("aria-label", t("chat.saveToWiki"));
       saveButton.setAttr("title", t("chat.saveToWiki"));
@@ -457,9 +457,15 @@ export class ChatView extends ItemView {
 
     this.pending.add(sendConvId);
     this.updateComposerState();
-    this.showThinking();
+    const streamBubble = this.createStreamingBubble();
+    let streamedText = "";
     try {
-      const reply = await this.controller.answerChat([...conversation.messages]);
+      const reply = await this.controller.answerChat([...conversation.messages], (token) => {
+        streamedText += token;
+        if (!this.closed && this.activeId === sendConvId) {
+          this.updateStreamingBubbleText(streamBubble, streamedText);
+        }
+      });
       this.pending.delete(sendConvId);
       const target = this.conversations.find((c) => c.id === sendConvId);
       const assistantMessage: ChatMessage = { role: "assistant", content: reply };
@@ -471,8 +477,7 @@ export class ChatView extends ItemView {
         this.persist();
       }
       if (!this.closed && this.activeId === sendConvId && target) {
-        this.hideThinking();
-        this.renderMessage(assistantMessage, target.messages.length - 1);
+        this.finalizeStreamingBubble(streamBubble, reply, sendConvId);
       }
     } catch (error) {
       this.pending.delete(sendConvId);
@@ -487,6 +492,7 @@ export class ChatView extends ItemView {
       // Surface the failure even when the user has switched to another conversation, so a
       // background turn never fails silently.
       new Notice(message);
+      this.detachRow(streamBubble.row);
       if (!this.closed && this.activeId === sendConvId) {
         // Re-render so the rolled-back user bubble and cleared title match the persisted state,
         // then show the error inline (pending was already cleared, so no thinking indicator).
@@ -583,14 +589,14 @@ export class ChatView extends ItemView {
 
   private renderComposer(root: HTMLElement): void {
     const composer = root.createDiv();
-    composer.addClass("auto-llm-wiki-chat-composer");
+    composer.addClass("contextos-chat-composer");
     this.composerEl = composer;
 
     const inputWrap = composer.createDiv();
-    inputWrap.addClass("auto-llm-wiki-chat-inputwrap");
+    inputWrap.addClass("contextos-chat-inputwrap");
 
     this.inputEl = inputWrap.createEl("textarea");
-    this.inputEl.addClass("auto-llm-wiki-chat-input");
+    this.inputEl.addClass("contextos-chat-input");
     this.inputEl.placeholder = t("chat.inputPlaceholder");
     this.inputEl.rows = 1;
     this.applyStyles(this.inputEl, { resize: "none" });
@@ -607,8 +613,8 @@ export class ChatView extends ItemView {
     });
 
     this.sendButton = inputWrap.createEl("button");
-    this.sendButton.addClass("auto-llm-wiki-chat-iconbtn");
-    this.sendButton.addClass("auto-llm-wiki-chat-send");
+    this.sendButton.addClass("contextos-chat-iconbtn");
+    this.sendButton.addClass("contextos-chat-send");
     setIcon(this.sendButton, "arrow-up");
     this.sendButton.setAttr("aria-label", t("chat.send"));
     this.sendButton.setAttr("title", t("chat.send"));
@@ -617,26 +623,26 @@ export class ChatView extends ItemView {
     this.sendButton.onclick = () => this.handleSend();
 
     const hint = composer.createEl("div", { text: t("chat.inputHint") });
-    hint.addClass("auto-llm-wiki-chat-hint");
+    hint.addClass("contextos-chat-hint");
   }
 
   private showThinking(): void {
     const row = this.listEl.createDiv();
     this.rowEls.push(row);
-    row.addClass("auto-llm-wiki-chat-message");
-    row.addClass("auto-llm-wiki-chat-message-assistant");
+    row.addClass("contextos-chat-message");
+    row.addClass("contextos-chat-message-assistant");
 
     const avatar = row.createDiv();
-    avatar.addClass("auto-llm-wiki-chat-avatar");
+    avatar.addClass("contextos-chat-avatar");
     setIcon(avatar, "sparkles");
 
     const main = row.createDiv();
-    main.addClass("auto-llm-wiki-chat-main");
+    main.addClass("contextos-chat-main");
     const dots = main.createDiv();
-    dots.addClass("auto-llm-wiki-chat-thinking");
+    dots.addClass("contextos-chat-thinking");
     dots.setAttr("aria-label", t("chat.thinking"));
     for (let index = 0; index < 3; index++) {
-      dots.createSpan().addClass("auto-llm-wiki-chat-dot");
+      dots.createSpan().addClass("contextos-chat-dot");
     }
 
     this.thinkingEl = row;
@@ -648,10 +654,92 @@ export class ChatView extends ItemView {
     this.thinkingEl = undefined;
   }
 
+  private createStreamingBubble(): { row: HTMLElement; body: HTMLElement; streamEl: HTMLElement } {
+    const row = this.listEl.createDiv();
+    this.rowEls.push(row);
+    row.addClass("contextos-chat-message");
+    row.addClass("contextos-chat-message-assistant");
+
+    const avatar = row.createDiv();
+    avatar.addClass("contextos-chat-avatar");
+    setIcon(avatar, "sparkles");
+
+    const main = row.createDiv();
+    main.addClass("contextos-chat-main");
+
+    const name = main.createEl("div", { text: t("chat.assistant") });
+    name.addClass("contextos-chat-name");
+
+    const body = main.createDiv();
+    body.addClass("contextos-chat-body");
+
+    const streamEl = body.createDiv();
+    const thinking = streamEl.createDiv();
+    thinking.addClass("contextos-chat-thinking");
+    thinking.setAttr("aria-label", t("chat.thinking"));
+    for (let i = 0; i < 3; i++) {
+      thinking.createSpan().addClass("contextos-chat-dot");
+    }
+
+    this.scrollToBottom();
+    return { row, body, streamEl };
+  }
+
+  private updateStreamingBubbleText(bubble: { streamEl: HTMLElement }, text: string): void {
+    bubble.streamEl.setText(text);
+    this.scrollToBottomIfAtBottom();
+  }
+
+  private finalizeStreamingBubble(bubble: { row: HTMLElement; body: HTMLElement; streamEl: HTMLElement }, fullText: string, convId: string): void {
+    bubble.streamEl.remove();
+    const body = bubble.body;
+    void MarkdownRenderer.render(this.app, fullText, body, "", this)
+      .then(() => { if (!this.closed) this.scrollToBottom(); })
+      .catch(() => { if (!this.closed) body.setText(fullText); });
+
+    const main = body.parentElement!;
+    const actions = main.createDiv();
+    actions.addClass("contextos-chat-actions");
+
+    const copyButton = actions.createEl("button");
+    copyButton.addClass("contextos-chat-actionbtn");
+    copyButton.addClass("contextos-chat-copy");
+    setIcon(copyButton, "copy");
+    copyButton.setAttr("aria-label", t("chat.copy"));
+    copyButton.setAttr("title", t("chat.copy"));
+    copyButton.onclick = () => this.handleCopy(fullText, copyButton);
+
+    const saveButton = actions.createEl("button");
+    saveButton.addClass("contextos-chat-actionbtn");
+    saveButton.addClass("contextos-chat-save");
+    setIcon(saveButton, "save");
+    saveButton.setAttr("aria-label", t("chat.saveToWiki"));
+    saveButton.setAttr("title", t("chat.saveToWiki"));
+    const question = this.activeUserMessageForConv(convId);
+    saveButton.onclick = () => this.handleSave(question, fullText, saveButton);
+  }
+
+  private activeUserMessageForConv(convId: string): string {
+    const conversation = this.conversations.find((c) => c.id === convId);
+    if (!conversation) return "";
+    const messages = conversation.messages;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role === "user") return messages[index].content;
+    }
+    return "";
+  }
+
+  private scrollToBottomIfAtBottom(): void {
+    const el = this.listEl;
+    if (el.scrollTop + el.clientHeight + 50 >= el.scrollHeight) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+
   private renderError(message: string): void {
     const error = this.listEl.createDiv();
     this.rowEls.push(error);
-    error.addClass("auto-llm-wiki-chat-error");
+    error.addClass("contextos-chat-error");
     error.setText(message);
     this.scrollToBottom();
   }
