@@ -131,6 +131,41 @@ test("answerChat sends a single chat call when the wiki is small", async () => {
   expect(reply).toBe("the answer");
 });
 
+test("answerChat reads wiki context via vault.cachedRead when available", async () => {
+  const contentByPath = new Map<string, string>([
+    ["wiki/a.md", "alpha"],
+    ["wiki/index.md", "# Index"],
+    ["wiki/log.md", "# Log"]
+  ]);
+  const TFileMock = obsidian.TFile as unknown as { new(path: string): obsidian.TFile };
+  const read = jest.fn(async (file: { path: string }) => contentByPath.get(file.path) ?? "");
+  const cachedRead = jest.fn(async (file: { path: string }) => contentByPath.get(file.path) ?? "");
+  jest.spyOn(obsidian, "requestUrl").mockResolvedValue({
+    status: 200,
+    text: JSON.stringify({ choices: [{ message: { content: "ok" } }] })
+  } as never);
+
+  const plugin = newPlugin({ openAIApiKey: "key" });
+  plugin.app = {
+    vault: {
+      getMarkdownFiles: () => [{ path: "wiki/a.md" }, { path: "wiki/index.md" }, { path: "wiki/log.md" }],
+      getFiles: () => [],
+      getAbstractFileByPath: (path: string) => (contentByPath.has(path) ? new TFileMock(path) : null),
+      read,
+      cachedRead,
+      on: jest.fn(() => "ref")
+    }
+  } as never;
+
+  await plugin.onload();
+  await (plugin as unknown as { answerChat(m: unknown[]): Promise<string> })
+    .answerChat([{ role: "user", content: "hi" }]);
+
+  // Read-only wiki context goes through Obsidian's cached reader (caches + invalidates), not read().
+  expect(cachedRead).toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+});
+
 test("saveChatAnswer opens the reviewed change-plan preview, and applying it writes the page", async () => {
   const contentByPath = new Map<string, string>([["wiki/index.md", "# Index"], ["wiki/log.md", "# Log"]]);
   const created = new Map<string, string>();
@@ -181,7 +216,7 @@ test("onload registers the chat view and a ribbon icon", async () => {
   expect(view.getViewType()).toBe(CHAT_VIEW_TYPE);
 });
 
-test("openChatView reveals the chat in the right sidebar", async () => {
+test("toggleChatView opens the chat in the right sidebar when none is open", async () => {
   const setViewState = jest.fn(async () => undefined);
   const revealLeaf = jest.fn();
   const rightLeaf = { setViewState };
@@ -192,14 +227,15 @@ test("openChatView reveals the chat in the right sidebar", async () => {
   } as never;
 
   await plugin.onload();
-  await (plugin as unknown as { openChatView(): Promise<void> }).openChatView();
+  await (plugin as unknown as { toggleChatView(): Promise<void> }).toggleChatView();
 
   expect(setViewState).toHaveBeenCalledWith({ type: CHAT_VIEW_TYPE, active: true });
   expect(revealLeaf).toHaveBeenCalledWith(rightLeaf);
 });
 
-test("openChatView reuses an existing chat leaf without creating a new one", async () => {
-  const existing = { existing: true };
+test("toggleChatView closes the chat (detaches the leaf) when it is already open", async () => {
+  const detach = jest.fn();
+  const existing = { detach };
   const revealLeaf = jest.fn();
   const getRightLeaf = jest.fn();
   const plugin = newPlugin({});
@@ -209,8 +245,9 @@ test("openChatView reuses an existing chat leaf without creating a new one", asy
   } as never;
 
   await plugin.onload();
-  await (plugin as unknown as { openChatView(): Promise<void> }).openChatView();
+  await (plugin as unknown as { toggleChatView(): Promise<void> }).toggleChatView();
 
+  expect(detach).toHaveBeenCalledTimes(1); // closes the open panel
   expect(getRightLeaf).not.toHaveBeenCalled();
-  expect(revealLeaf).toHaveBeenCalledWith(existing);
+  expect(revealLeaf).not.toHaveBeenCalled();
 });

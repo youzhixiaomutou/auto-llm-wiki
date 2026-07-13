@@ -16,10 +16,17 @@ export function ensureMarkdownPath(path: string): string {
   return normalized;
 }
 
+// Prefer Obsidian's cached reader for read-only access: it serves recently-read content from an
+// in-memory cache and invalidates it on change, so repeated reads across chat turns avoid disk
+// without any custom cache. Falls back to read() for stubs/older builds without cachedRead.
+function readVaultFile(app: App, file: TFile): Promise<string> {
+  return app.vault.cachedRead ? app.vault.cachedRead(file) : app.vault.read(file);
+}
+
 export async function readTextFile(app: App, path: string): Promise<string> {
   const normalized = ensureMarkdownPath(path);
   const file = app.vault.getAbstractFileByPath(normalized);
-  if (file instanceof TFile) return app.vault.read(file);
+  if (file instanceof TFile) return readVaultFile(app, file);
   return "";
 }
 
@@ -28,7 +35,7 @@ export async function listMarkdownFiles(app: App, folder: string): Promise<Array
   const files = app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${normalizedFolder}/`));
   const pages = [];
   for (const file of files) {
-    pages.push({ path: file.path, content: await app.vault.read(file) });
+    pages.push({ path: file.path, content: await readVaultFile(app, file) });
   }
   return pages;
 }
@@ -41,14 +48,13 @@ export function listMarkdownFilePaths(app: App, folder: string): string[] {
 }
 
 export async function readWikiPages(app: App, paths: string[]): Promise<Array<{ path: string; content: string }>> {
-  const pages: Array<{ path: string; content: string }> = [];
-  for (const path of paths) {
+  // Read pages concurrently; keep input order and skip paths that are not existing files.
+  const pages = await Promise.all(paths.map(async (path) => {
     const file = app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) {
-      pages.push({ path, content: await app.vault.read(file) });
-    }
-  }
-  return pages;
+    if (!(file instanceof TFile)) return undefined;
+    return { path, content: await readVaultFile(app, file) };
+  }));
+  return pages.filter((page): page is { path: string; content: string } => page !== undefined);
 }
 
 export async function applyChangePlan(app: App, plan: ChangePlan): Promise<void> {

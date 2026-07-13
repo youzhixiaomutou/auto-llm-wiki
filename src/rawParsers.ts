@@ -1,10 +1,9 @@
-import * as mammoth from "mammoth";
-import WordExtractor from "word-extractor";
-import * as XLSX from "@e965/xlsx";
-import * as JSZip from "jszip";
-import * as PPT from "ppt-to-text";
 import { App, loadPdfJs, TFile } from "obsidian";
 import { t } from "./i18n";
+
+// The heavy document parsers (mammoth / word-extractor / @e965/xlsx / jszip / ppt-to-text) are
+// imported dynamically inside the parser that needs them, so their module init does not run on
+// plugin startup — only when a matching source file is actually ingested.
 
 export interface PdfTextItem {
   str?: string;
@@ -238,6 +237,7 @@ const docxParser: RawParser = {
     return isDocxRawPath(path);
   },
   async read(app: App, file: TFile): Promise<string> {
+    const mammoth = await import("mammoth");
     const arrayBuffer = await app.vault.readBinary(file);
     const result = await mammoth.extractRawText({ arrayBuffer });
     return requireOfficeText(result.value, file.path);
@@ -253,6 +253,7 @@ const docParser: RawParser = {
     return isDocRawPath(path);
   },
   async read(app: App, file: TFile): Promise<string> {
+    const { default: WordExtractor } = await import("word-extractor");
     const arrayBuffer = await app.vault.readBinary(file);
     const extractor = new WordExtractor();
     const document = await extractor.extract(Buffer.from(new Uint8Array(arrayBuffer)));
@@ -278,6 +279,7 @@ const xlsxParser: RawParser = {
     return isXlsxRawPath(path);
   },
   async read(app: App, file: TFile): Promise<string> {
+    const XLSX = await import("@e965/xlsx");
     const buffer = await app.vault.readBinary(file);
     const workbook = XLSX.read(new Uint8Array(buffer), { type: "array" });
     let hasCellText = false;
@@ -424,6 +426,7 @@ const pptParser: RawParser = {
     return isPptRawPath(path);
   },
   async read(app: App, file: TFile): Promise<string> {
+    const PPT = await import("ppt-to-text");
     const arrayBuffer = await app.vault.readBinary(file);
     const text = PPT.extractText(Buffer.from(new Uint8Array(arrayBuffer)), { separator: "\n\n" });
     const slides = text
@@ -663,6 +666,7 @@ const pptxParser: RawParser = {
     return isPptxRawPath(path);
   },
   async read(app: App, file: TFile, context: RawParserContext): Promise<string> {
+    const JSZip = await import("jszip");
     const buffer = await app.vault.readBinary(file);
     const archive = await JSZip.loadAsync(buffer);
     const slides = await getPptxSlides(archive.files);

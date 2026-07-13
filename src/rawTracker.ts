@@ -1,4 +1,3 @@
-import * as JSZip from "jszip";
 import { App, TFile } from "obsidian";
 import { LLMWikiSettings, RawFileState, RawFileStateEntry } from "./types";
 import { normalizePath } from "./changePlan";
@@ -98,19 +97,26 @@ export function hashBinaryContent(buffer: ArrayBuffer): string {
 }
 
 const OPEN_XML_IGNORED_PREFIXES = ["docProps/"];
+// Decompress at most this many archive entries at once. A large Office file can hold thousands of
+// parts, so an unbounded Promise.all would spike memory (and this runs inside the file-level scan).
+const OPENXML_HASH_CONCURRENCY = 8;
 
 function isIgnoredOpenXmlEntry(path: string): boolean {
   return OPEN_XML_IGNORED_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 export async function hashOpenXmlContent(buffer: ArrayBuffer): Promise<string> {
+  // Loaded dynamically so jszip isn't initialized on startup (only when hashing an Office file).
+  const JSZip = await import("jszip");
   const archive = await JSZip.loadAsync(buffer);
-  const parts: string[] = [];
-  for (const path of Object.keys(archive.files).sort()) {
-    const file = archive.files[path];
-    if (!file || file.dir || isIgnoredOpenXmlEntry(path)) continue;
-    parts.push(path, await file.async("base64"));
-  }
+  // Sort first so the hash is order-stable, then decompress entries with bounded concurrency.
+  const paths = Object.keys(archive.files).sort()
+    .filter((path) => {
+      const file = archive.files[path];
+      return file && !file.dir && !isIgnoredOpenXmlEntry(path);
+    });
+  const parts = await mapWithConcurrency(paths, OPENXML_HASH_CONCURRENCY,
+    async (path) => `${path}\0${await archive.files[path].async("base64")}`);
   return hashContent(parts.join("\0"));
 }
 

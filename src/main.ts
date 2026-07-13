@@ -37,7 +37,7 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     this.registerAutoIngestListeners();
 
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
-    this.addRibbonIcon("message-circle", t("command.openChat"), () => void this.openChatView());
+    this.addRibbonIcon("message-circle", t("command.openChat"), () => void this.toggleChatView());
 
     this.addCommand({
       id: "ingest-active-source",
@@ -48,7 +48,7 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     this.addCommand({
       id: "query-wiki",
       name: t("command.queryWiki"),
-      callback: () => void this.openChatView()
+      callback: () => void this.toggleChatView()
     });
 
     this.addCommand({
@@ -243,16 +243,20 @@ export default class LLMWikiPlugin extends Plugin implements ChatController {
     }
   }
 
-  async openChatView(): Promise<void> {
+  // Toggle the chat panel: open + reveal it in the right sidebar if it is closed, or close it
+  // (detach the leaf) if it is already open. Conversations persist in plugin data, so reopening
+  // restores the active conversation. Bound to both the ribbon icon and the query command.
+  async toggleChatView(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(CHAT_VIEW_TYPE)[0];
-    if (!leaf) {
-      const rightLeaf = workspace.getRightLeaf(false);
-      if (!rightLeaf) return;
-      await rightLeaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
-      leaf = rightLeaf;
+    const existing = workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+    if (existing.length > 0) {
+      existing.forEach((leaf) => leaf.detach());
+      return;
     }
-    workspace.revealLeaf(leaf);
+    const rightLeaf = workspace.getRightLeaf(false);
+    if (!rightLeaf) return;
+    await rightLeaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+    workspace.revealLeaf(rightLeaf);
   }
 
   hasApiKey(): boolean {
